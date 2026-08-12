@@ -1,0 +1,34 @@
+# NJUCSKeeper — Git 忽略规则
+# 仅追踪代码与项目文档；笔记、索引、缓存均不追踪
+
+# 笔记目录
+data/notes/
+
+# 索引文件
+data/index/index.json
+data/index/external_manifest.json
+
+# 外部资料缓存（除目录占位）
+data/external/*
+!data/external/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# 系统文件
+.DS_Store
+Thumbs.db

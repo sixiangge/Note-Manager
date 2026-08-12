@@ -1,0 +1,17 @@
+# NJUCSKeeper 依赖清单
+# 按开发阶段分组，除 Phase 1 外均为远期预留
+
+# ======== Phase 1（当前必须安装）========
+jieba>=0.42.1
+python-frontmatter>=1.0.0
+
+# ======== Phase 2（GUI 时安装）========
+# PyQt6>=6.5.0
+
+# ======== Phase 3（远期，按需安装）========
+# chromadb>=0.4.0          # 向量数据库
+# pypdf>=3.0.0             # PDF 解析
+# python-pptx>=0.6.21      # PPTX 解析
+# docx2txt>=0.8            # DOCX 解析
+# ollama>=0.1.0            # 本地 LLM
+# openai>=1.0.0            # OpenAI API
