@@ -403,11 +403,12 @@ def teach(question: str, files: list[str] | None = None,
       6. 返回带差异提示的教学回答
 
     Phase 1 行为：
-      - 打印 "🔮 教学功能将在 Phase 3 实现。"
+      - 打印 "[Phase 3] 教学功能尚未实现，预计在 Phase 3 提供。"
       - 打印 "输入问题: {question}"
       - 打印 "附件文件: {files}"（如有）
       - 返回占位字符串
       - 不抛出异常
+    （提示文案不使用 emoji，避免 Windows GBK 控制台输出时 UnicodeEncodeError）
 
     Args:
         question: 用户问题
@@ -598,7 +599,7 @@ python main.py search "二叉树" --type exam
 
 # 远期占位（不报错）—— 模拟用户从本地任意路径上传文件
 python main.py teach "解释极限的定义" --files "C:\Users\25153\Desktop\课件.pdf"
-# 期望：打印 "🔮 教学功能将在 Phase 3 实现。" 并正常退出
+# 期望：打印 "[Phase 3] 教学功能尚未实现，预计在 Phase 3 提供。" 并正常退出
 
 # 帮助信息
 python main.py --help
