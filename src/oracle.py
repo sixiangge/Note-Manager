@@ -12,7 +12,7 @@ def teach(question: str, files: list[str] | None = None,
 
     Phase 1 行为：打印占位提示，正常退出，不抛出异常。
     """
-    print("🔮 教学功能将在 Phase 3 实现。")
+    print("[Phase 3] 教学功能尚未实现，预计在 Phase 3 提供。")
     print(f"输入问题: {question}")
     if files:
         print(f"附件文件: {files}")

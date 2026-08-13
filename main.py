@@ -8,40 +8,45 @@
 """
 
 import argparse
+import shutil
 import sys
+from pathlib import Path
+
+# 项目根目录（本文件所在目录），所有数据路径均以此为基准
+BASE_DIR = Path(__file__).resolve().parent
+NOTES_ROOT = BASE_DIR / "data" / "notes"
+EXTERNAL_DIR = BASE_DIR / "data" / "external"
+INDEX_PATH = BASE_DIR / "data" / "index" / "index.json"
+MANIFEST_PATH = BASE_DIR / "data" / "index" / "external_manifest.json"
 
 from src.oracle import teach as oracle_teach
 
 
 def cmd_index(args: argparse.Namespace) -> int:
     """构建倒排索引。"""
-    from src.indexer import build_index, save_index, generate_sample_notes
-    from pathlib import Path
+    from src.indexer import build_index, generate_sample_notes, save_index
 
-    notes_root = Path("data/notes")
-    if not notes_root.exists() or not any(notes_root.iterdir()):
-        print("📝 未检测到笔记文件，正在生成示例笔记...")
-        generate_sample_notes(notes_root)
+    if not NOTES_ROOT.exists() or not any(NOTES_ROOT.rglob("*.md")):
+        print("笔记目录为空，正在生成示例笔记...")
+        generate_sample_notes(NOTES_ROOT)
 
-    print("🔍 正在构建倒排索引...")
-    index = build_index(notes_root)
-    save_index(index, Path("data/index/index.json"))
-    print("✅ 索引构建完成。")
+    print("正在构建倒排索引...")
+    index = build_index(NOTES_ROOT, base_dir=BASE_DIR)
+    save_index(index, INDEX_PATH)
+    print(f"索引构建完成，共 {len(index['documents'])} 篇笔记。")
     return 0
 
 
 def cmd_search(args: argparse.Namespace) -> int:
     """关键词搜索。"""
-    from src.searcher import search
     from src.indexer import load_index
-    from pathlib import Path
+    from src.searcher import search
 
-    index_path = Path("data/index/index.json")
-    if not index_path.exists():
-        print("❌ 尚未构建索引，请先运行: python main.py index")
+    if not INDEX_PATH.exists():
+        print("错误: 尚未构建索引，请先运行: python main.py index")
         return 1
 
-    index = load_index(index_path)
+    index = load_index(INDEX_PATH)
     results = search(args.query, index, note_type=args.type, top_k=args.top)
 
     if not results:
@@ -50,7 +55,7 @@ def cmd_search(args: argparse.Namespace) -> int:
 
     print(f"\n搜索「{args.query}」的结果（共 {len(results)} 条）：\n")
     for i, r in enumerate(results, 1):
-        type_label = "📗 期末" if r["note_type"] == "exam" else "📘 考研"
+        type_label = "[期末]" if r["note_type"] == "exam" else "[考研]"
         print(f"  [{i}] {r['title']}  |  {type_label}  |  score: {r['score']:.1f}")
         print(f"      科目: {r['subject']}  |  章节: {r['chapter']}")
         print(f"      路径: {r['path']}\n")
@@ -72,42 +77,33 @@ def cmd_teach(args: argparse.Namespace) -> int:
 
 def cmd_cleanup_cache(args: argparse.Namespace) -> int:
     """清空外部资料缓存。"""
-    from pathlib import Path
-    import shutil
-    import json
-
-    external_dir = Path("data/external")
-    manifest_path = Path("data/index/external_manifest.json")
-
-    # 收集将要清理的文件
-    to_delete = []
-    if external_dir.exists():
-        to_delete.extend(
-            str(p) for p in external_dir.iterdir() if p.name != ".gitkeep"
-        )
-    if manifest_path.exists():
-        to_delete.append(str(manifest_path))
+    # 收集将被清理的条目
+    to_delete: list[Path] = []
+    if EXTERNAL_DIR.exists():
+        to_delete.extend(p for p in EXTERNAL_DIR.iterdir() if p.name != ".gitkeep")
+    if MANIFEST_PATH.exists():
+        to_delete.append(MANIFEST_PATH)
 
     if args.dry_run:
-        print(f"🔍 缓存清理预览（--dry-run 模式，未实际删除）：")
+        print("缓存清理预览（--dry-run 模式，未实际删除）：")
         for f in to_delete:
             print(f"  将删除: {f}")
         print(f"共 {len(to_delete)} 个文件/目录将被清理。")
         return 0
 
     for f in to_delete:
-        path = Path(f)
-        if path.is_dir():
-            shutil.rmtree(path)
+        if f.is_dir():
+            shutil.rmtree(f)
         else:
-            path.unlink()
+            f.unlink()
         print(f"  已删除: {f}")
 
-    print(f"✅ 缓存清理完成，共删除 {len(to_delete)} 个文件/目录。")
+    print(f"缓存清理完成，共删除 {len(to_delete)} 个文件/目录。")
     return 0
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """构造命令行解析器。"""
     parser = argparse.ArgumentParser(
         prog="NJUCSKeeper",
         description="本地化计算机课程知识中台 — 笔记管理与教学校验",
@@ -137,7 +133,13 @@ def main() -> int:
     sp_cleanup.add_argument("--dry-run", action="store_true", default=False,
                             help="仅列出将被清理的文件，不实际删除")
 
-    args = parser.parse_args()
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI 入口。"""
+    parser = build_parser()
+    args = parser.parse_args(argv)
 
     if args.command is None:
         parser.print_help()

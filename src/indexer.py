@@ -63,11 +63,13 @@ def _field_frequencies(note: Note) -> dict[str, dict[str, int]]:
     return term_fields
 
 
-def build_index(notes_root: Path) -> dict:
+def build_index(notes_root: Path, base_dir: Path | None = None) -> dict:
     """扫描 notes_root 下所有 .md 文件，构建倒排索引。
 
     Args:
         notes_root: 笔记根目录，默认 data/notes/
+        base_dir: 索引键的相对基准目录，默认取 notes_root 的上一级。
+                  传入项目根目录时索引键形如 data/notes/微积分/xx.md
 
     Returns:
         索引字典，结构见 plan.md §4.1：
@@ -86,6 +88,7 @@ def build_index(notes_root: Path) -> dict:
     notes_root = Path(notes_root)
     if not notes_root.exists():
         raise FileNotFoundError(f"笔记目录不存在: {notes_root}")
+    base_dir = Path(base_dir) if base_dir else notes_root.parent
 
     documents: dict[str, dict[str, Any]] = {}
     inverted_index: dict[str, dict[str, dict[str, int]]] = {}
@@ -97,8 +100,8 @@ def build_index(notes_root: Path) -> dict:
             print(f"[跳过] 无法解析的笔记: {md_file} — {e}", file=sys.stderr)
             continue
 
-        # 索引键使用相对项目根目录的路径（notes_root 的上一级），统一为正斜杠
-        rel_path = str(md_file.relative_to(notes_root.parent)).replace("\\", "/")
+        # 索引键使用相对 base_dir 的路径，统一为正斜杠
+        rel_path = str(md_file.relative_to(base_dir)).replace("\\", "/")
         documents[rel_path] = {
             "title": note.title,
             "subject": note.subject,
@@ -246,6 +249,8 @@ $$f(x)=\\sum_{k=0}^{n}\\frac{f^{(k)}(x_0)}{k!}(x-x_0)^k + \\frac{f^{(n+1)}(\\xi)
 
 $$e^x = 1 + x + \\frac{x^2}{2!} + \\cdots + o(x^n)$$
 $$\\sin x = x - \\frac{x^3}{3!} + \\frac{x^5}{5!} - \\cdots + o(x^{2n+1})$$
+
+典型应用：求极限 $\\lim_{x\\to 0}\\frac{\\tan x - x}{x^3}$。由 $\\tan x = x + \\frac{x^3}{3} + o(x^3)$，原极限 $= \\frac{1}{3}$。用泰勒展开求极限比洛必达法则更直接，是考研高频考点。
 
 ## 3. 综合例题
 
