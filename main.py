@@ -63,15 +63,17 @@ def cmd_search(args: argparse.Namespace) -> int:
 
 
 def cmd_teach(args: argparse.Namespace) -> int:
-    """教学校验（Phase 3 远期占位）。"""
-    response = oracle_teach(
+    """教学校验（Phase 3 远期占位）。
+
+    Phase 1：oracle.teach 自行打印占位提示与入参回显，返回占位字符串。
+    Phase 3：oracle.teach 返回最终回答，届时在此打印 response。
+    """
+    oracle_teach(
         question=args.question,
         files=args.files,
         subject=args.subject,
         note_type=args.type,
     )
-    if response:
-        print(response)
     return 0
 
 
