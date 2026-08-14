@@ -160,11 +160,11 @@ def generate_sample_notes(notes_root: Path) -> None:
     """
     notes_root = Path(notes_root)
     samples: dict[str, str] = {
-        "微积分/极限与连续.md": _SAMPLE_CALCULUS_EXAM,
-        "微积分/中值定理与泰勒展开.md": _SAMPLE_CALCULUS_POSTGRAD,
-        "数据结构/二叉树与遍历.md": _SAMPLE_DS_EXAM,
-        "数据结构/红黑树与B树.md": _SAMPLE_DS_POSTGRAD,
-        "机器学习导论/监督学习基础.md": _SAMPLE_ML_EXAM,
+        "微积分/[示例]极限与连续.md": _SAMPLE_CALCULUS_EXAM,
+        "微积分/[示例]中值定理与泰勒展开.md": _SAMPLE_CALCULUS_POSTGRAD,
+        "数据结构/[示例]二叉树与遍历.md": _SAMPLE_DS_EXAM,
+        "数据结构/[示例]红黑树与B树.md": _SAMPLE_DS_POSTGRAD,
+        "机器学习导论/[示例]监督学习基础.md": _SAMPLE_ML_EXAM,
     }
     for rel, content in samples.items():
         target = notes_root / rel

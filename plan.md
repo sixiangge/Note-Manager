@@ -54,13 +54,13 @@ NJUCSKeeper/
 ├── data/
 │   ├── notes/                    # Markdown 笔记，按科目子文件夹（不纳入 Git，.gitignore 排除）
 │   │   ├── 微积分/
-│   │   │   ├── 极限与连续.md
+│   │   │   ├── [示例]极限与连续.md
 │   │   │   └── 导数与微分.md
 │   │   ├── 数据结构/
-│   │   │   ├── 二叉树与遍历.md
+│   │   │   ├── [示例]二叉树与遍历.md
 │   │   │   └── 排序算法对比.md
 │   │   └── 机器学习导论/
-│   │       └── 监督学习基础.md
+│   │       └── [示例]监督学习基础.md
 │   │
 │   ├── external/                 # 外部资料缓存（不纳入 Git，.gitignore 排除）
 │   │   └── .gitkeep              # 仅保留目录结构占位
@@ -171,7 +171,7 @@ class TeachSession:
 ```json
 {
   "documents": {
-    "data/notes/微积分/极限与连续.md": {
+    "data/notes/微积分/[示例]极限与连续.md": {
       "title": "极限与连续",
       "subject": "微积分",
       "chapter": "第一章 极限与连续",
@@ -182,7 +182,7 @@ class TeachSession:
   },
   "inverted_index": {
     "极限": {
-      "data/notes/微积分/极限与连续.md": {
+      "data/notes/微积分/[示例]极限与连续.md": {
         "title": 1,
         "subject": 0,
         "chapter": 0,
@@ -318,11 +318,11 @@ def generate_sample_notes(notes_root: Path) -> None:
     """
     空仓启动时生成 5 篇示例笔记：
 
-    1. data/notes/微积分/极限与连续.md          — note_type: exam,          exam_freq: 5
-    2. data/notes/微积分/中值定理与泰勒展开.md    — note_type: postgraduate,  exam_freq: 4
-    3. data/notes/数据结构/二叉树与遍历.md       — note_type: exam,          exam_freq: 5
-    4. data/notes/数据结构/红黑树与B树.md        — note_type: postgraduate,  exam_freq: 3
-    5. data/notes/机器学习导论/监督学习基础.md    — note_type: exam,          exam_freq: 4
+    1. data/notes/微积分/[示例]极限与连续.md        — note_type: exam,          exam_freq: 5
+    2. data/notes/微积分/[示例]中值定理与泰勒展开.md  — note_type: postgraduate,  exam_freq: 4
+    3. data/notes/数据结构/[示例]二叉树与遍历.md     — note_type: exam,          exam_freq: 5
+    4. data/notes/数据结构/[示例]红黑树与B树.md      — note_type: postgraduate,  exam_freq: 3
+    5. data/notes/机器学习导论/[示例]监督学习基础.md  — note_type: exam,          exam_freq: 4
 
     每篇笔记包含：完整的 YAML Front-matter + 不少于 200 字的正文（含 LaTeX 公式、代码块）。
     """

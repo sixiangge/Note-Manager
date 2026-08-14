@@ -157,7 +157,7 @@ class TestGenerateSampleNotes(unittest.TestCase):
         notes = Path(tempfile.mkdtemp())
         generate_sample_notes(notes)
 
-        target = notes / "微积分" / "极限与连续.md"
+        target = notes / "微积分" / "[示例]极限与连续.md"
         original = target.read_text(encoding="utf-8")
         target.write_text("用户自己的内容\n", encoding="utf-8")
 
