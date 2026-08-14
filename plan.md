@@ -707,7 +707,7 @@ Agent 在按本 plan.md 编写代码时，请遵循以下顺序：
 3. **自底向上**：parsers → indexer → searcher → oracle → main.py
 4. **每个模块写完后立即写对应的 test_**，确保可验证
 5. **每完成一个子任务立即 commit**，遵循 §8.4 的 commit 规范
-6. **示例笔记内容需丰富**：包含 LaTeX 公式（`$...$` / `$$...$$`）、代码块（```python```）、列表、表格
+6. **示例笔记内容需丰富**：包含 LaTeX 公式（行内 `$...$`；块级公式 `$$` 独占行、公式内容分行，兼容 MarkText 渲染）、代码块（```python```）、列表、表格
 7. **异常处理**：所有文件 I/O 和解析操作包裹 try-except，不因单个文件错误中断批量处理
 8. **类型注解**：所有公开函数必须包含完整类型注解
 9. **docstring**：使用 Google 风格 docstring（Args/Returns/Raises）

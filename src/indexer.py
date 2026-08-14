@@ -243,12 +243,19 @@ exam_freq: 4
 
 ## 2. 泰勒展开（带拉格朗日余项）
 
-$$f(x)=\\sum_{k=0}^{n}\\frac{f^{(k)}(x_0)}{k!}(x-x_0)^k + \\frac{f^{(n+1)}(\\xi)}{(n+1)!}(x-x_0)^{n+1}$$
+$$
+f(x)=\\sum_{k=0}^{n}\\frac{f^{(k)}(x_0)}{k!}(x-x_0)^k + \\frac{f^{(n+1)}(\\xi)}{(n+1)!}(x-x_0)^{n+1}
+$$
 
 常用麦克劳林展开：
 
-$$e^x = 1 + x + \\frac{x^2}{2!} + \\cdots + o(x^n)$$
-$$\\sin x = x - \\frac{x^3}{3!} + \\frac{x^5}{5!} - \\cdots + o(x^{2n+1})$$
+$$
+e^x = 1 + x + \\frac{x^2}{2!} + \\cdots + o(x^n)
+$$
+
+$$
+\\sin x = x - \\frac{x^3}{3!} + \\frac{x^5}{5!} - \\cdots + o(x^{2n+1})
+$$
 
 典型应用：求极限 $\\lim_{x\\to 0}\\frac{\\tan x - x}{x^3}$。由 $\\tan x = x + \\frac{x^3}{3} + o(x^3)$，原极限 $= \\frac{1}{3}$。用泰勒展开求极限比洛必达法则更直接，是考研高频考点。
 
@@ -413,7 +420,9 @@ exam_freq: 4
 
 假设函数 $h(x) = w^T x + b$，均方误差损失：
 
-$$J(w) = \\frac{1}{2m}\\sum_{i=1}^{m}(h(x^{(i)}) - y^{(i)})^2$$
+$$
+J(w) = \\frac{1}{2m}\\sum_{i=1}^{m}(h(x^{(i)}) - y^{(i)})^2
+$$
 
 梯度下降更新：$w_j := w_j - \\alpha \\frac{\\partial J}{\\partial w_j}$
 
@@ -421,7 +430,9 @@ $$J(w) = \\frac{1}{2m}\\sum_{i=1}^{m}(h(x^{(i)}) - y^{(i)})^2$$
 
 $h(x) = \\sigma(w^T x) = \\frac{1}{1+e^{-w^T x}}$，用交叉熵损失：
 
-$$J(w) = -\\frac{1}{m}\\sum_{i=1}^{m}\\left[y^{(i)}\\log h(x^{(i)}) + (1-y^{(i)})\\log(1-h(x^{(i)}))\\right]$$
+$$
+J(w) = -\\frac{1}{m}\\sum_{i=1}^{m}\\left[y^{(i)}\\log h(x^{(i)}) + (1-y^{(i)})\\log(1-h(x^{(i)}))\\right]
+$$
 
 ## 4. 模型评估指标
 
