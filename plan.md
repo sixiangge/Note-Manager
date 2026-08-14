@@ -52,6 +52,7 @@ NJUCSKeeper/
 ├── .gitignore                    # Git 忽略规则
 │
 ├── data/
+│   ├── 格式示例.md                # 笔记格式模板（占位内容，位于 data/ 根目录不参与索引）
 │   ├── notes/                    # Markdown 笔记，按科目子文件夹（不纳入 Git，.gitignore 排除）
 │   │   ├── 微积分/
 │   │   │   ├── [示例]极限与连续.md
