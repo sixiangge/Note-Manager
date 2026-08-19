@@ -47,7 +47,8 @@ def cmd_search(args: argparse.Namespace) -> int:
         return 1
 
     index = load_index(INDEX_PATH)
-    results = search(args.query, index, note_type=args.type, top_k=args.top)
+    results = search(args.query, index, note_type=args.type,
+                     top_k=args.top, subject=args.subject)
 
     if not results:
         print(f"未找到与「{args.query}」相关的结果。")
@@ -120,6 +121,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp_search.add_argument("query", type=str, help="搜索关键词")
     sp_search.add_argument("--type", dest="type", choices=["exam", "postgraduate"],
                            default=None, help="按笔记类型过滤")
+    sp_search.add_argument("--subject", type=str, default=None, help="按科目过滤")
     sp_search.add_argument("--top", type=int, default=10, help="返回结果数（默认 10）")
 
     # teach

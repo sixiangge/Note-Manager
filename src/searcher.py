@@ -15,30 +15,45 @@ FIELD_WEIGHTS = {
     "body": 1.0,
 }
 
+PARTIAL_QUERY_WEIGHT = 0.2
 
-def _tokenize_query(query: str) -> list[str]:
-    """对查询进行 jieba 分词（搜索引擎模式），保序去重。
+
+def _query_terms(query: str) -> list[tuple[str, float]]:
+    """对查询进行 jieba 分词，并为完整查询词和拆分词分配权重。
 
     Args:
         query: 查询文本
 
     Returns:
-        词项列表
+        (词项, 查询权重) 列表。完整查询词保持 1.0，拆分词降权。
     """
     if not query or not query.strip():
         return []
-    tokens = [t.strip() for t in jieba.cut_for_search(query) if t.strip()]
+    normalized_query = query.strip()
+    tokens = [t.strip() for t in jieba.cut_for_search(normalized_query) if t.strip()]
     seen: set[str] = set()
     result: list[str] = []
     for t in tokens:
         if t not in seen:
             seen.add(t)
             result.append(t)
-    return result
+
+    has_full_query = normalized_query in seen
+    if not has_full_query:
+        result.insert(0, normalized_query)
+
+    has_partial_terms = any(t != normalized_query for t in result)
+    weighted_terms: list[tuple[str, float]] = []
+    for term in result:
+        weight = 1.0
+        if has_partial_terms and term != normalized_query:
+            weight = PARTIAL_QUERY_WEIGHT
+        weighted_terms.append((term, weight))
+    return weighted_terms
 
 
 def search(query: str, index: dict, note_type: str | None = None,
-           top_k: int = 10) -> list[dict]:
+           top_k: int = 10, subject: str | None = None) -> list[dict]:
     """关键词检索，按权重排序。
 
     Args:
@@ -46,6 +61,7 @@ def search(query: str, index: dict, note_type: str | None = None,
         index: 倒排索引字典（结构见 plan.md §4.1）
         note_type: 过滤条件，None=全部, 'exam' 或 'postgraduate'
         top_k: 返回前 K 个结果
+        subject: 科目过滤条件，None=全部，非空时精确匹配 subject 字段
 
     Returns:
         [{path, title, subject, chapter, tags, note_type, exam_freq, score}]，
@@ -56,8 +72,8 @@ def search(query: str, index: dict, note_type: str | None = None,
                     + tags_tf×2 + body_tf×1
         total = Σ score(d, t) + (exam_freq / 5) × 0.5
     """
-    tokens = _tokenize_query(query)
-    if not tokens:
+    query_terms = _query_terms(query)
+    if not query_terms:
         return []
 
     documents: dict = index.get("documents", {})
@@ -65,21 +81,24 @@ def search(query: str, index: dict, note_type: str | None = None,
 
     # 累加每个匹配文档的得分
     scores: dict[str, float] = {}
-    for token in tokens:
+    for token, query_weight in query_terms:
         postings = inverted_index.get(token, {})
         for path, field_tfs in postings.items():
             doc_score = 0.0
             for field, tf in field_tfs.items():
                 doc_score += tf * FIELD_WEIGHTS.get(field, 1.0)
-            scores[path] = scores.get(path, 0.0) + doc_score
+            scores[path] = scores.get(path, 0.0) + doc_score * query_weight
 
-    # 构造结果并应用 exam_freq 加分与类型过滤
+    # 构造结果并应用 exam_freq 加分、类型过滤与科目过滤
     results: list[dict] = []
+    subject_filter = subject.strip() if subject else None
     for path, score in scores.items():
         doc = documents.get(path)
         if doc is None:
             continue
         if note_type is not None and doc.get("note_type") != note_type:
+            continue
+        if subject_filter is not None and doc.get("subject") != subject_filter:
             continue
         score += (doc.get("exam_freq", 0) / 5.0) * 0.5
         results.append({

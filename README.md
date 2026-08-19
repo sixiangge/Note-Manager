@@ -9,6 +9,7 @@
 | Markdown 笔记管理 | ✅ | ✅ | ✅ |
 | 关键词全文搜索 | ✅ | ✅ | ✅ |
 | 双轨制过滤（期末/考研） | ✅ | ✅ | ✅ |
+| 按科目过滤 | ✅ | ✅ | ✅ |
 | 空仓示例笔记生成 | ✅ | ✅ | ✅ |
 | 图形界面浏览/搜索 | — | 🔮 | 🔮 |
 | 外部资料拖拽导入 | — | 🔮 | 🔮 |
@@ -30,8 +31,8 @@ python main.py index
 # 搜索笔记
 python main.py search "极限"
 
-# 按笔记类型过滤
-python main.py search "二叉树" --type exam
+# 按科目和笔记类型过滤
+python main.py search "应用层" --subject "计算机网络" --type exam
 ```
 
 ## 远期能力预览

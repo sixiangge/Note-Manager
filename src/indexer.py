@@ -18,25 +18,17 @@ INDEXED_FIELDS = ("title", "subject", "chapter", "tags", "body")
 
 
 def _tokenize(text: str) -> list[str]:
-    """对文本进行 jieba 分词，返回去除空白与重复的词项列表。
+    """对文本进行 jieba 分词，返回去除空白的词项列表。
 
     Args:
         text: 待分词文本
 
     Returns:
-        词项列表（保序去重）
+        词项列表（保留重复项，用于真实词频统计）
     """
     if not text:
         return []
-    tokens = [t.strip() for t in jieba.cut_for_search(text) if t.strip()]
-    # 保序去重
-    seen: set[str] = set()
-    result: list[str] = []
-    for t in tokens:
-        if t not in seen:
-            seen.add(t)
-            result.append(t)
-    return result
+    return [t.strip() for t in jieba.cut_for_search(text) if t.strip()]
 
 
 def _field_frequencies(note: Note) -> dict[str, dict[str, int]]:
