@@ -3,6 +3,7 @@
 用法:
     python main.py index              # 构建倒排索引
     python main.py search "关键词"     # 关键词搜索
+    python main.py gui                # 启动图形界面
     python main.py teach "问题"        # 教学校验（Phase 3 远期）
     python main.py cleanup-cache      # 清空外部资料缓存
 """
@@ -61,6 +62,17 @@ def cmd_search(args: argparse.Namespace) -> int:
         print(f"      科目: {r['subject']}  |  章节: {r['chapter']}")
         print(f"      路径: {r['path']}\n")
     return 0
+
+
+def cmd_gui(args: argparse.Namespace) -> int:
+    """启动 PyQt6 图形界面。"""
+    from src.gui import run_gui
+
+    try:
+        return run_gui(BASE_DIR, NOTES_ROOT, INDEX_PATH)
+    except RuntimeError as exc:
+        print(f"错误: {exc}")
+        return 1
 
 
 def cmd_teach(args: argparse.Namespace) -> int:
@@ -124,6 +136,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp_search.add_argument("--subject", type=str, default=None, help="按科目过滤")
     sp_search.add_argument("--top", type=int, default=10, help="返回结果数（默认 10）")
 
+    # gui
+    subparsers.add_parser("gui", help="启动图形界面")
+
     # teach
     sp_teach = subparsers.add_parser("teach", help="教学校验（Phase 3 远期占位）")
     sp_teach.add_argument("question", type=str, help="问题文本")
@@ -152,6 +167,7 @@ def main(argv: list[str] | None = None) -> int:
     commands = {
         "index": cmd_index,
         "search": cmd_search,
+        "gui": cmd_gui,
         "teach": cmd_teach,
         "cleanup-cache": cmd_cleanup_cache,
     }
