@@ -53,7 +53,10 @@ def _query_terms(query: str) -> list[tuple[str, float]]:
 
 
 def search(query: str, index: dict, note_type: str | None = None,
-           top_k: int = 10, subject: str | None = None) -> list[dict]:
+           top_k: int = 10,
+           subject: str | list[str] | tuple[str, ...] | set[str] | None = None,
+           exclude_tag: str | list[str] | tuple[str, ...] | set[str] | None = None
+           ) -> list[dict]:
     """关键词检索，按权重排序。
 
     Args:
@@ -61,7 +64,8 @@ def search(query: str, index: dict, note_type: str | None = None,
         index: 倒排索引字典（结构见 plan.md §4.1）
         note_type: 过滤条件，None=全部, 'exam' 或 'postgraduate'
         top_k: 返回前 K 个结果
-        subject: 科目过滤条件，None=全部，非空时精确匹配 subject 字段
+        subject: 科目或科目集合，None=全部；多科目之间为“或”关系
+        exclude_tag: 排除标签或标签集合，None=不排除；命中任一标签的笔记不会返回
 
     Returns:
         [{path, title, subject, chapter, tags, note_type, exam_freq, score}]，
@@ -89,16 +93,29 @@ def search(query: str, index: dict, note_type: str | None = None,
                 doc_score += tf * FIELD_WEIGHTS.get(field, 1.0)
             scores[path] = scores.get(path, 0.0) + doc_score * query_weight
 
-    # 构造结果并应用 exam_freq 加分、类型过滤与科目过滤
+    # 构造结果并应用 exam_freq 加分、类型过滤、科目过滤与标签排除
     results: list[dict] = []
-    subject_filter = subject.strip() if subject else None
+    if isinstance(subject, str):
+        subject_filters = {subject.strip()} if subject.strip() else set()
+    else:
+        subject_filters = {
+            value.strip() for value in (subject or []) if value and value.strip()
+        }
+    if isinstance(exclude_tag, str):
+        excluded_tags = {exclude_tag.strip()} if exclude_tag.strip() else set()
+    else:
+        excluded_tags = {
+            tag.strip() for tag in (exclude_tag or []) if tag and tag.strip()
+        }
     for path, score in scores.items():
         doc = documents.get(path)
         if doc is None:
             continue
         if note_type is not None and doc.get("note_type") != note_type:
             continue
-        if subject_filter is not None and doc.get("subject") != subject_filter:
+        if subject_filters and doc.get("subject") not in subject_filters:
+            continue
+        if excluded_tags.intersection(doc.get("tags", [])):
             continue
         score += (doc.get("exam_freq", 0) / 5.0) * 0.5
         results.append({

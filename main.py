@@ -10,6 +10,7 @@
 
 import argparse
 import shutil
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -26,6 +27,7 @@ from src.oracle import teach as oracle_teach
 def cmd_index(args: argparse.Namespace) -> int:
     """构建倒排索引。"""
     from src.indexer import build_index, generate_sample_notes, save_index
+    from src.storage import sync_note_catalog
 
     if not NOTES_ROOT.exists() or not any(NOTES_ROOT.rglob("*.md")):
         print("笔记目录为空，正在生成示例笔记...")
@@ -34,7 +36,13 @@ def cmd_index(args: argparse.Namespace) -> int:
     print("正在构建倒排索引...")
     index = build_index(NOTES_ROOT, base_dir=BASE_DIR)
     save_index(index, INDEX_PATH)
-    print(f"索引构建完成，共 {len(index['documents'])} 篇笔记。")
+    database_path = INDEX_PATH.with_name("njucskeeper.db")
+    try:
+        synced_count = sync_note_catalog(index, BASE_DIR, database_path)
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        print(f"错误: SQLite 笔记目录同步失败: {exc}")
+        return 1
+    print(f"索引构建完成，共 {synced_count} 篇笔记，SQLite 目录已同步。")
     return 0
 
 
@@ -49,7 +57,8 @@ def cmd_search(args: argparse.Namespace) -> int:
 
     index = load_index(INDEX_PATH)
     results = search(args.query, index, note_type=args.type,
-                     top_k=args.top, subject=args.subject)
+                     top_k=args.top, subject=args.subject,
+                     exclude_tag=args.exclude_tag)
 
     if not results:
         print(f"未找到与「{args.query}」相关的结果。")
@@ -134,6 +143,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp_search.add_argument("--type", dest="type", choices=["exam", "postgraduate"],
                            default=None, help="按笔记类型过滤")
     sp_search.add_argument("--subject", type=str, default=None, help="按科目过滤")
+    sp_search.add_argument("--exclude-tag", type=str, default=None,
+                           help="排除带有该标签的笔记")
     sp_search.add_argument("--top", type=int, default=10, help="返回结果数（默认 10）")
 
     # gui

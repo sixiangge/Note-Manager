@@ -171,10 +171,10 @@ def generate_sample_notes(notes_root: Path) -> None:
 # ======================= 示例笔记内容 =======================
 
 _SAMPLE_CALCULUS_EXAM = """---
-title: "极限与连续"
+title: "[示例]极限与连续"
 subject: "微积分"
 chapter: "第一章 极限与连续"
-tags: ["极限", "ε-δ定义", "连续函数", "洛必达"]
+tags: ["示例", "极限", "ε-δ定义", "连续函数", "洛必达"]
 note_type: "exam"
 exam_freq: 5
 ---
@@ -215,10 +215,10 @@ for n in [10, 100, 1000, 10000]:
 """
 
 _SAMPLE_CALCULUS_POSTGRAD = """---
-title: "中值定理与泰勒展开"
+title: "[示例]中值定理与泰勒展开"
 subject: "微积分"
 chapter: "第三章 中值定理与导数应用"
-tags: ["罗尔定理", "拉格朗日", "柯西中值", "泰勒展开", "考研"]
+tags: ["示例", "罗尔定理", "拉格朗日", "柯西中值", "泰勒展开", "考研"]
 note_type: "postgraduate"
 exam_freq: 4
 ---
@@ -266,10 +266,10 @@ print(series(sin(x), x, 0, 7))  # x - x**3/6 + x**5/120
 """
 
 _SAMPLE_DS_EXAM = """---
-title: "二叉树与遍历"
+title: "[示例]二叉树与遍历"
 subject: "数据结构"
 chapter: "第五章 树与二叉树"
-tags: ["二叉树", "遍历", "前序", "中序", "后序", "层序"]
+tags: ["示例", "二叉树", "遍历", "前序", "中序", "后序", "层序"]
 note_type: "exam"
 exam_freq: 5
 ---
@@ -333,10 +333,10 @@ def level_order(root: TreeNode | None):
 """
 
 _SAMPLE_DS_POSTGRAD = """---
-title: "红黑树与B树"
+title: "[示例]红黑树与B树"
 subject: "数据结构"
 chapter: "第七章 查找"
-tags: ["红黑树", "B树", "B+树", "平衡", "考研"]
+tags: ["示例", "红黑树", "B树", "B+树", "平衡", "考研"]
 note_type: "postgraduate"
 exam_freq: 3
 ---
@@ -392,10 +392,10 @@ def fixup_after_insert(node):
 """
 
 _SAMPLE_ML_EXAM = """---
-title: "监督学习基础"
+title: "[示例]监督学习基础"
 subject: "机器学习导论"
 chapter: "第二章 监督学习"
-tags: ["线性回归", "逻辑回归", "过拟合", "交叉验证"]
+tags: ["示例", "线性回归", "逻辑回归", "过拟合", "交叉验证"]
 note_type: "exam"
 exam_freq: 4
 ---

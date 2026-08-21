@@ -6,6 +6,7 @@ data/notes/
 
 # 索引文件
 data/index/index.json
+data/index/njucskeeper.db*
 data/index/external_manifest.json
 
 # 外部资料缓存（除目录占位）
