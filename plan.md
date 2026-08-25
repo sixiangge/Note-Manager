@@ -1,6 +1,6 @@
-# NJUCSKeeper 开发规划
+# NoteManager 开发规划
 
-> **项目代号**：NJUCSKeeper — 本地化计算机课程知识中台
+> **项目代号**：NoteManager — 本地化计算机课程知识中台
 > **受众**：开发者本人 + Coding Agent
 > **用途**：个人开发路线图 & Agent 代码编写的执行规范
 
@@ -46,7 +46,7 @@
 ## 2. 目录结构
 
 ```
-NJUCSKeeper/
+NoteManager/
 ├── README.md                     # 项目说明、Phase 功能边界、快速开始
 ├── plan.md                       # 本文件
 ├── main.py                       # CLI 入口，argparse 子命令分发
@@ -70,7 +70,7 @@ NJUCSKeeper/
 │   │
 │   └── index/
 │       ├── index.json            # 倒排索引（仅索引 .md 笔记，.gitignore 排除）
-│       ├── njucskeeper.db         # SQLite 本地目录与应用状态（.gitignore 排除）
+│       ├── notemanager.db         # SQLite 本地目录与应用状态（.gitignore 排除）
 │       └── external_manifest.json # 上传文件缓存清单（.gitignore 排除）
 │
 ├── src/
@@ -637,6 +637,8 @@ python main.py --help
 - `notes` 表保存 `path`（主键）、标题、科目、章节、标签、笔记类型、考频、文件修改时间和内容哈希；不保存正文
 - `search_history` 表保存查询词、多选科目/类型/多选排除标签筛选条件和搜索时间，替代 QSettings 中的 GUI 历史存储
 - 重建索引时在同一事务中增量写入或删除目录记录；数据库丢失或损坏时，笔记目录可通过扫描 `data/notes/` 重建，搜索历史允许重置
+- GUI 启动时先显示居中的主题化启动页，在后台读取 `index.json` 与搜索历史，并以深绿色进度条及右下方加载项反馈进度；完成后再创建正式窗口
+- GUI 启动不执行 SQLite 笔记目录全量同步或内容哈希。“仅手动重建”策略跳过目录扫描；“启动时检查文件变更并提示重建”策略只在后台比较 Markdown 路径集合和修改时间。全文扫描、内容哈希和 SQLite 目录同步仅由主动重建索引触发
 - 外部编辑器仍直接修改 Markdown；GUI 不直接编辑数据库中的笔记字段，避免数据库与文件内容不一致
 
 ### 7.2.1 设置中心（Phase 2 增量，已实现）
@@ -712,7 +714,7 @@ python main.py --help
 **实施边界与存储**：
 
 - Phase 2 已实现“外观与阅读”“搜索与笔记库”“文件与索引”“隐私与数据”的全部设置项；目录切换只改变索引来源并重建索引，不迁移或改写原 Markdown 文件
-- 在 `njucskeeper.db` 中增加独立的 `app_settings` 表保存非敏感键值和版本号；设置缺失时回退到内置默认值，数据库重建后不影响 Markdown 笔记
+- 在 `notemanager.db` 中增加独立的 `app_settings` 表保存非敏感键值和版本号；设置缺失时回退到内置默认值，数据库重建后不影响 Markdown 笔记
 - 搜索历史开关、历史条数、搜索行为和示例笔记显示策略只影响 GUI 初始状态和历史记录，不改变 CLI 的默认行为；默认类型和标签排除继续由现有搜索界面按次选择
 - Phase 3 的模型/网络设置与 API Key 分层保存：普通连接偏好可本地持久化，密钥必须使用系统凭据存储或环境变量；无可用模型时教学面板保持占位状态
 
@@ -737,7 +739,7 @@ python main.py --help
 ### 8.1 初始化
 
 ```bash
-cd NJUCSKeeper
+cd NoteManager
 git init
 ```
 
@@ -749,7 +751,7 @@ git init
 |--------|------|
 | `data/notes/` | 笔记由用户自行管理，目录位置固定但内容不纳入版本控制 |
 | `data/index/index.json` | 索引文件由 `index` 命令重建，无需追踪 |
-| `data/index/njucskeeper.db*` | SQLite 本地目录、搜索历史及 WAL 辅助文件，属于用户运行数据 |
+| `data/index/notemanager.db*` | SQLite 本地目录、搜索历史及 WAL 辅助文件，属于用户运行数据 |
 | `data/index/external_manifest.json` | 上传缓存清单，每次会话变化 |
 | `data/external/**`（除 `.gitkeep`） | 外部资料为临时上传缓存，不持久化在仓库中 |
 | `__pycache__/`、`*.pyc` | Python 编译产物 |

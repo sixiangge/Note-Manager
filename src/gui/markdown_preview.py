@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from PyQt6.QtCore import QUrl
-from PyQt6.QtGui import QColor, QImage, QTextDocument
+from PyQt6.QtGui import QColor, QImage, QTextDocument, QTextTable
 from PyQt6.QtWidgets import QTextBrowser
 
 
@@ -32,7 +32,7 @@ _MATH_COMMAND_RE = re.compile(r"\\(?:[A-Za-z]+|.)")
 
 
 def _matplotlib_cache_dir() -> Path:
-    cache_dir = Path(tempfile.gettempdir()) / "NJUCSKeeper" / "matplotlib"
+    cache_dir = Path(tempfile.gettempdir()) / "NoteManager" / "matplotlib"
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
 
@@ -284,6 +284,19 @@ def _style_formula_images(html: str) -> str:
     )
 
 
+def _align_table_headers(document: QTextDocument) -> None:
+    """Copy each column's parsed alignment to its omitted header cell."""
+    for frame in document.rootFrame().childFrames():
+        if not isinstance(frame, QTextTable) or frame.rows() < 2:
+            continue
+        for column in range(frame.columns()):
+            header_cursor = frame.cellAt(0, column).firstCursorPosition()
+            header_format = header_cursor.blockFormat()
+            body_format = frame.cellAt(1, column).firstCursorPosition().blockFormat()
+            header_format.setAlignment(body_format.alignment())
+            header_cursor.setBlockFormat(header_format)
+
+
 def _style_body(
     html: str,
     body_font: str,
@@ -383,6 +396,7 @@ class MarkdownPreview(QTextBrowser):
                 QUrl.fromLocalFile(str(self._base_path.resolve()) + "/")
             )
         document.setMarkdown(processed)
+        _align_table_headers(document)
         html = _style_body(
             _style_formula_images(
                 _box_code_blocks(

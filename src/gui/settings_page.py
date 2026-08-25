@@ -412,7 +412,7 @@ class SettingsPage(QWidget):
 
         explanation = QLabel(
             "data/notes 保存 Markdown 原文，是唯一真源；index.json 是可重建的全文索引；"
-            "njucskeeper.db 保存可重建的笔记目录、设置和搜索历史；data/external 保存临时外部资料。"
+            "notemanager.db 保存可重建的笔记目录、设置和搜索历史；data/external 保存临时外部资料。"
         )
         explanation.setObjectName("muted")
         explanation.setWordWrap(True)

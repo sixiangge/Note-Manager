@@ -1,4 +1,4 @@
-"""Shared data models for NJUCSKeeper."""
+"""Shared data models for NoteManager."""
 
 from dataclasses import dataclass, field
 from pathlib import Path

@@ -2,6 +2,7 @@
 
 import sys
 import sqlite3
+import tempfile
 from pathlib import Path
 
 
@@ -16,7 +17,7 @@ def _set_windows_app_id() -> None:
         import ctypes
 
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-            "NJUCSKeeper.Desktop"
+            "NoteManager.Desktop"
         )
     except (AttributeError, OSError):
         pass
@@ -94,8 +95,64 @@ def _create_app_icon():
     return icon
 
 
+def _set_window_icon(window, icon) -> None:
+    """Set both Qt and native Windows icons used by the taskbar."""
+    window.setWindowIcon(icon)
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        icon_dir = Path(tempfile.gettempdir()) / "NoteManager"
+        icon_dir.mkdir(parents=True, exist_ok=True)
+        icon_path = icon_dir / "notemanager.ico"
+        if not icon.pixmap(256, 256).save(str(icon_path), "ICO"):
+            return
+
+        user32 = ctypes.windll.user32
+        user32.LoadImageW.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_wchar_p,
+            ctypes.c_uint,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint,
+        )
+        user32.LoadImageW.restype = ctypes.c_void_p
+        user32.SendMessageW.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_uint,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+        )
+        user32.SendMessageW.restype = ctypes.c_ssize_t
+
+        image_icon = 1
+        load_from_file = 0x0010
+        wm_set_icon = 0x0080
+        icon_small = 0
+        icon_big = 1
+        big_handle = user32.LoadImageW(
+            None, str(icon_path), image_icon, 32, 32, load_from_file
+        )
+        small_handle = user32.LoadImageW(
+            None, str(icon_path), image_icon, 16, 16, load_from_file
+        )
+        if big_handle:
+            user32.SendMessageW(
+                int(window.winId()), wm_set_icon, icon_big, big_handle
+            )
+        if small_handle:
+            user32.SendMessageW(
+                int(window.winId()), wm_set_icon, icon_small, small_handle
+            )
+        window._notemanager_native_icon_handles = (big_handle, small_handle)
+    except (AttributeError, OSError, TypeError, ValueError):
+        pass
+
+
 def run_gui(base_dir: Path, notes_root: Path, index_path: Path) -> int:
-    """Start the NJUCSKeeper PyQt6 desktop application.
+    """Start the NoteManager PyQt6 desktop application.
 
     Args:
         base_dir: Project root used to resolve paths stored in the index.
@@ -108,15 +165,15 @@ def run_gui(base_dir: Path, notes_root: Path, index_path: Path) -> int:
     _set_windows_app_id()
 
     try:
-        from PyQt6.QtCore import QCoreApplication
-        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtCore import QCoreApplication, QObject, QThread, pyqtSlot
+        from PyQt6.QtWidgets import QApplication, QMessageBox
     except ImportError as exc:
         raise RuntimeError(
             "GUI 依赖尚未安装，请先运行: pip install -r requirements.txt"
         ) from exc
 
-    from src.gui.main_window import MainWindow
     from src.app_settings import normalized_settings
+    from src.gui.startup import StartupLoader, StartupScreen
     from src.gui.theme import (
         apply_application_palette,
         resolved_theme,
@@ -130,10 +187,10 @@ def run_gui(base_dir: Path, notes_root: Path, index_path: Path) -> int:
     if app is None:
         app = QApplication(sys.argv)
 
-    QCoreApplication.setOrganizationName("NJUCSKeeper")
-    QCoreApplication.setApplicationName("NJUCSKeeper")
+    QCoreApplication.setOrganizationName("NoteManager")
+    QCoreApplication.setApplicationName("NoteManager")
     app.setStyle("Fusion")
-    database_path = Path(index_path).with_name("njucskeeper.db")
+    database_path = Path(index_path).with_name("notemanager.db")
     try:
         stored_settings = load_app_settings(database_path)
     except (OSError, sqlite3.Error):
@@ -145,14 +202,77 @@ def run_gui(base_dir: Path, notes_root: Path, index_path: Path) -> int:
     app_icon = _create_app_icon()
     app.setWindowIcon(app_icon)
 
-    window = MainWindow(
+    splash = StartupScreen(initial_theme, app_icon)
+    splash.show_centered()
+    splash.update_progress(8, "正在读取启动设置")
+    app.processEvents()
+
+    splash.update_progress(14, "正在加载界面组件")
+    app.processEvents()
+    from src.gui.main_window import MainWindow
+
+    effective_notes_root = Path(str(initial_settings["notes_root"]))
+    thread = QThread(app)
+    worker = StartupLoader(
         base_dir=Path(base_dir),
-        notes_root=Path(notes_root),
+        notes_root=effective_notes_root,
         index_path=Path(index_path),
+        database_path=database_path,
+        history_enabled=bool(initial_settings["history_enabled"]),
+        history_limit=int(initial_settings["history_limit"]),
+        check_for_changes=initial_settings["index_strategy"] == "prompt",
     )
-    window.setWindowIcon(app_icon)
-    window.show()
-    set_windows_title_bar_theme(window, window.theme)
+    worker.moveToThread(thread)
+
+    state: dict[str, object] = {
+        "splash": splash,
+        "thread": thread,
+        "worker": worker,
+    }
+
+    class StartupCoordinator(QObject):
+        @pyqtSlot(object)
+        def finish(self, result) -> None:
+            try:
+                splash.update_progress(84, "正在构建正式页面")
+                app.processEvents()
+                window = MainWindow(
+                    base_dir=Path(base_dir),
+                    notes_root=Path(notes_root),
+                    index_path=Path(index_path),
+                    preloaded_settings=initial_settings,
+                    preloaded_index=result.index,
+                    preloaded_history=result.search_history,
+                )
+                state["window"] = window
+                _set_window_icon(window, app_icon)
+                splash.update_progress(96, "正在恢复界面状态")
+                window.show()
+                set_windows_title_bar_theme(window, window.theme)
+                splash.update_progress(100, "加载完成")
+                app.processEvents()
+                splash.close()
+                window.complete_startup(
+                    index_missing=result.index_missing,
+                    index_stale=result.index_stale,
+                    index_error=result.index_error,
+                )
+            except Exception as exc:
+                splash.update_progress(100, "启动失败")
+                QMessageBox.critical(splash, "NoteManager 启动失败", str(exc))
+                splash.close()
+
+    coordinator = StartupCoordinator(app)
+    state["coordinator"] = coordinator
+    app._notemanager_startup_state = state
+
+    thread.started.connect(worker.run)
+    worker.progress.connect(splash.update_progress)
+    worker.finished.connect(coordinator.finish)
+    worker.finished.connect(thread.quit)
+    worker.finished.connect(worker.deleteLater)
+    thread.finished.connect(thread.deleteLater)
+    thread.start()
 
     if owns_app:
         return app.exec()

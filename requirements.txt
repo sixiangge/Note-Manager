@@ -1,4 +1,4 @@
-# NJUCSKeeper 依赖清单
+# NoteManager 依赖清单
 # 按开发阶段分组，除 Phase 1 外均为远期预留
 
 # ======== Phase 1（当前必须安装）========

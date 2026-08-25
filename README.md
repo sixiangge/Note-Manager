@@ -1,4 +1,4 @@
-# NJUCSKeeper
+# NoteManager
 
 本地化计算机课程知识中台 — 笔记管理与 AI 教学校验。
 
@@ -47,6 +47,8 @@ python main.py gui
 
 图形界面支持按科目浏览、全文搜索与高亮、只读 Markdown 预览、离线 LaTeX 公式渲染、带边框的等宽字体代码块、标签排除、持久化搜索历史和一键重建索引。公式使用 `$...$`（行内）或 `$$...$$`（独立公式）书写。科目列表和排除标签列表均支持搜索、多选和全选/全不选；输入列表搜索词后，批量选择只作用于当前匹配项。搜索结果可以同时来自多个已选科目，命中任一已选排除标签的笔记不会显示；点击历史记录会恢复当时选择的全部科目、笔记类型与排除标签。内置示例笔记的标题带有 `[示例]` 前缀，并统一包含 `示例` 标签。教学对话与附件上传仅保留界面位置，将在 Phase 3 接入。
 
+GUI 启动后会立即显示与当前主题一致的启动页，并在后台读取索引和搜索历史。默认“仅手动重建”策略不会在启动时扫描笔记目录；选择“启动时检查文件变更并提示重建”后，只在后台比较文件路径和修改时间。启动过程不会全量同步 SQLite 笔记目录或计算内容哈希；这些操作仅在运行 `python main.py index` 或点击“重建索引”时按需执行。
+
 ### 设置
 
 GUI 左侧栏底部的“设置”位于“重建索引”下方。设置会即时保存到 SQLite，并支持：
@@ -66,7 +68,7 @@ SQLite 由 Python 标准库 `sqlite3` 提供，不需要安装或运行独立数
 
 - `data/notes/`：Markdown 原始笔记，是正文与 Front-matter 的唯一数据源
 - `data/index/index.json`：jieba 全文检索使用的可重建倒排索引
-- `data/index/njucskeeper.db`：SQLite 笔记目录、文件指纹、GUI 设置与搜索历史
+- `data/index/notemanager.db`：SQLite 笔记目录、文件指纹、GUI 设置与搜索历史
 
 不要直接修改 SQLite 中的笔记字段。使用外部编辑器修改 Markdown 后，运行 `python main.py index`，或在 GUI 中点击“重建索引”，系统会在同一轮操作中更新 `index.json` 和 SQLite。数据库文件丢失或损坏时，关闭 GUI、移除该数据库及其 `-wal`/`-shm` 辅助文件，再重新构建索引即可恢复笔记目录；搜索历史会被重置。
 
@@ -87,6 +89,7 @@ python main.py teach "解释极限的定义" --files "课件.pdf"
 ├── data/external/         外部资料缓存
 ├── data/index/            倒排索引与 SQLite 本地数据库
 ├── src/storage.py         SQLite 存储与同步
+├── src/gui/startup.py     启动页与后台轻量加载
 ├── src/parsers/           文件解析器
 ├── src/rag/               向量检索模块
 └── tests/                 单元测试

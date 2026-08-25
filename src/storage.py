@@ -38,7 +38,7 @@ def initialize_database(database_path: Path) -> None:
     """Create the SQLite database and required tables when absent.
 
     Args:
-        database_path: Path to ``njucskeeper.db``.
+        database_path: Path to ``notemanager.db``.
     """
     with _database_connection(database_path) as connection:
         connection.execute("PRAGMA journal_mode = WAL")
@@ -113,7 +113,7 @@ def sync_note_catalog(index: dict, base_dir: Path, database_path: Path) -> int:
     Args:
         index: Inverted-index dictionary containing a ``documents`` mapping.
         base_dir: Project root used to resolve document paths.
-        database_path: Path to ``njucskeeper.db``.
+        database_path: Path to ``notemanager.db``.
 
     Returns:
         Number of synchronized note rows.
@@ -454,7 +454,7 @@ def export_local_data(database_path: Path, output_path: Path) -> None:
         except (TypeError, json.JSONDecodeError):
             settings[row["key"]] = row["value_json"]
     payload = {
-        "format": "NJUCSKeeper local data",
+        "format": "NoteManager local data",
         "version": 1,
         "exported_at_ns": time.time_ns(),
         "settings": settings,

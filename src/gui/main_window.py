@@ -80,7 +80,6 @@ from src.storage import (
     clear_search_history as clear_persisted_search_history,
     export_local_data,
     load_app_settings,
-    load_note_catalog,
     load_search_history,
     record_search,
     reset_app_settings,
@@ -929,23 +928,44 @@ class IndexWorker(QObject):
 class MainWindow(QMainWindow):
     """Desktop workspace for note browsing, search, and read-only preview."""
 
-    def __init__(self, base_dir: Path, notes_root: Path, index_path: Path) -> None:
+    def __init__(
+        self,
+        base_dir: Path,
+        notes_root: Path,
+        index_path: Path,
+        *,
+        preloaded_settings: dict[str, Any] | None = None,
+        preloaded_index: dict[str, Any] | None = None,
+        preloaded_history: list[dict[str, Any]] | None = None,
+    ) -> None:
         super().__init__()
+        app = QApplication.instance()
+        if app is not None:
+            self.setWindowIcon(app.windowIcon())
         self.base_dir = base_dir.resolve()
         self.default_notes_root = notes_root.resolve()
         self.index_path = index_path.resolve()
-        self.database_path = self.index_path.with_name("njucskeeper.db")
-        try:
-            stored_settings = load_app_settings(self.database_path)
-        except (OSError, sqlite3.Error):
-            stored_settings = {}
+        self.database_path = self.index_path.with_name("notemanager.db")
+        if preloaded_settings is None:
+            try:
+                stored_settings = load_app_settings(self.database_path)
+            except (OSError, sqlite3.Error):
+                stored_settings = {}
+        else:
+            stored_settings = dict(preloaded_settings)
         self.settings = normalized_settings(stored_settings, self.default_notes_root)
         self.notes_root = Path(self.settings["notes_root"]).resolve()
         self.theme = resolved_theme(str(self.settings["theme"]), QApplication.instance())
-        self.index: dict[str, Any] = {"documents": {}, "inverted_index": {}}
-        self.catalog_documents: list[tuple[str, dict[str, Any]]] | None = None
+        self.index: dict[str, Any] = preloaded_index or {
+            "documents": {},
+            "inverted_index": {},
+        }
         self.current_query = ""
-        self.search_history = self._load_history()
+        self.search_history = (
+            list(preloaded_history)
+            if preloaded_history is not None
+            else self._load_history()
+        )
         self._last_preview: QTextBrowser | None = None
         self._last_note_path = ""
         self._preview_parts: dict[
@@ -965,14 +985,17 @@ class MainWindow(QMainWindow):
                 self._on_system_color_scheme_changed
             )
 
-        self.setWindowTitle("NJUCSKeeper")
+        self.setWindowTitle("NoteManager")
         self.resize(1380, 860)
         self.setMinimumSize(980, 640)
         self._apply_appearance_settings(refresh_content=False)
         self._build_ui()
         self._apply_appearance_settings()
         self._apply_startup_page()
-        self._load_initial_index()
+        if preloaded_index is None:
+            self._load_initial_index()
+        else:
+            self._refresh_from_index()
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -1030,13 +1053,13 @@ class MainWindow(QMainWindow):
         app_icon = QApplication.windowIcon()
         if app_icon.isNull():
             app_icon = QIcon(
-                str(Path(__file__).resolve().parent / "assets" / "njucskeeper.svg")
+                str(Path(__file__).resolve().parent / "assets" / "notemanager.svg")
             )
         brand_icon.setPixmap(app_icon.pixmap(QSize(22, 22)))
-        brand_icon.setToolTip("NJUCSKeeper")
+        brand_icon.setToolTip("NoteManager")
         brand_row.addWidget(brand_icon)
 
-        brand = QLabel("NJUCSKeeper")
+        brand = QLabel("NoteManager")
         brand.setObjectName("brand")
         brand_row.addWidget(brand)
         brand_row.addStretch(1)
@@ -1343,29 +1366,6 @@ class MainWindow(QMainWindow):
             return self.notes_root
         return self.base_dir
 
-    def _catalog_is_stale(self) -> bool:
-        try:
-            catalog = dict(load_note_catalog(self.database_path))
-        except (OSError, sqlite3.Error):
-            return False
-        if not catalog:
-            return False
-        index_base = self._index_base_dir()
-        current: dict[str, int] = {}
-        if self.notes_root.exists():
-            for file_path in self.notes_root.rglob("*.md"):
-                try:
-                    key = str(file_path.relative_to(index_base)).replace("\\", "/")
-                except ValueError:
-                    return True
-                current[key] = file_path.stat().st_mtime_ns
-        if set(current) != set(catalog):
-            return True
-        return any(
-            current[path] != int(document.get("modified_time_ns", 0))
-            for path, document in catalog.items()
-        )
-
     def _prompt_rebuild_for_changes(self) -> None:
         answer = QMessageBox.question(
             self,
@@ -1387,19 +1387,32 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"索引读取失败: {exc}")
             QTimer.singleShot(0, self.rebuild_index)
             return
-        database_available = True
-        catalog_stale = self._catalog_is_stale()
-        try:
-            if not catalog_stale:
-                sync_note_catalog(
-                    self.index, self._index_base_dir(), self.database_path
-                )
-        except (OSError, ValueError, sqlite3.Error) as exc:
-            database_available = False
-            self.statusBar().showMessage(f"SQLite 同步失败，将使用索引目录: {exc}")
-        self._refresh_from_index(load_database=database_available)
-        if catalog_stale and self.settings["index_strategy"] == "prompt":
+        self._refresh_from_index()
+
+    def complete_startup(
+        self,
+        *,
+        index_missing: bool = False,
+        index_stale: bool = False,
+        index_error: str = "",
+    ) -> None:
+        """Handle startup checks after the main window becomes visible."""
+        if index_error:
+            self.statusBar().showMessage(f"索引读取失败: {index_error}")
+            QTimer.singleShot(0, self.rebuild_index)
+            return
+        if index_missing:
+            self.statusBar().showMessage("未找到全文索引，正在按需构建...")
+            QTimer.singleShot(0, self.rebuild_index)
+            return
+        if not index_stale:
+            return
+        if self.settings["index_strategy"] == "prompt":
             QTimer.singleShot(0, self._prompt_rebuild_for_changes)
+        else:
+            self.statusBar().showMessage(
+                "检测到笔记文件变化，可点击“重建索引”更新内容", 8000
+            )
 
     def rebuild_index(self) -> None:
         """Rebuild the note index in a worker thread."""
@@ -1450,15 +1463,7 @@ class MainWindow(QMainWindow):
         self._index_thread = None
         self._index_worker = None
 
-    def _refresh_from_index(self, load_database: bool = True) -> None:
-        storage_error: str | None = None
-        try:
-            if not load_database:
-                raise sqlite3.DatabaseError("目录同步未完成")
-            self.catalog_documents = load_note_catalog(self.database_path)
-        except (OSError, sqlite3.Error) as exc:
-            self.catalog_documents = None
-            storage_error = str(exc)
+    def _refresh_from_index(self) -> None:
         self._populate_subject_tree()
         self._populate_subject_filter()
         self._populate_tag_filter()
@@ -1466,19 +1471,11 @@ class MainWindow(QMainWindow):
         if self.current_query:
             self.perform_search(record_history=False)
         count = len(self._documents())
-        if storage_error:
-            self.statusBar().showMessage(
-                f"SQLite 读取失败，已回退到索引目录: {storage_error}", 6000
-            )
-        else:
-            self.statusBar().showMessage(f"已从 SQLite 载入 {count} 篇笔记", 4000)
+        self.statusBar().showMessage(f"已载入 {count} 篇笔记", 4000)
         QTimer.singleShot(0, self._restore_reading_state)
 
     def _documents(self) -> list[tuple[str, dict[str, Any]]]:
-        if self.catalog_documents is not None:
-            documents = dict(self.catalog_documents)
-        else:
-            documents = self.index.get("documents", {})
+        documents = self.index.get("documents", {})
         visible_documents = documents.items()
         if not self.settings["show_sample_notes"]:
             visible_documents = (
@@ -2113,7 +2110,7 @@ class MainWindow(QMainWindow):
         self.settings_page.update_storage_status(summary)
 
     def _export_local_data(self) -> None:
-        suggested = self.base_dir / "NJUCSKeeper-local-data.json"
+        suggested = self.base_dir / "NoteManager-local-data.json"
         output, _filter = QFileDialog.getSaveFileName(
             self,
             "导出设置与搜索历史",

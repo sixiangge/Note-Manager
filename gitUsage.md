@@ -1,4 +1,4 @@
-# NJUCSKeeper — Git 使用指南
+# NoteManager — Git 使用指南
 
 > 本文基于项目的 `.gitignore` 配置和 Commit 规范撰写，面向日常开发场景。
 

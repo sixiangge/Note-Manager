@@ -1,4 +1,4 @@
-"""PyQt6 graphical interface for NJUCSKeeper."""
+"""PyQt6 graphical interface for NoteManager."""
 
 from src.gui.app import run_gui
 

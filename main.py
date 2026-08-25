@@ -1,4 +1,4 @@
-"""NJUCSKeeper — 本地化计算机课程知识中台 CLI 入口。
+"""NoteManager — 本地化计算机课程知识中台 CLI 入口。
 
 用法:
     python main.py index              # 构建倒排索引
@@ -36,7 +36,7 @@ def cmd_index(args: argparse.Namespace) -> int:
     print("正在构建倒排索引...")
     index = build_index(NOTES_ROOT, base_dir=BASE_DIR)
     save_index(index, INDEX_PATH)
-    database_path = INDEX_PATH.with_name("njucskeeper.db")
+    database_path = INDEX_PATH.with_name("notemanager.db")
     try:
         synced_count = sync_note_catalog(index, BASE_DIR, database_path)
     except (OSError, ValueError, sqlite3.Error) as exc:
@@ -129,7 +129,7 @@ def cmd_cleanup_cache(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     """构造命令行解析器。"""
     parser = argparse.ArgumentParser(
-        prog="NJUCSKeeper",
+        prog="NoteManager",
         description="本地化计算机课程知识中台 — 笔记管理与教学校验",
     )
     subparsers = parser.add_subparsers(dest="command", help="可用子命令")
