@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import math
 import re
 import shutil
 import sqlite3
@@ -472,15 +473,34 @@ def _painted_icon(name: str, theme: str = "light") -> QIcon:
         painter.drawLine(7, 7, 17, 17)
         painter.drawLine(17, 7, 7, 17)
     elif name == "gear":
-        painter.drawEllipse(QRectF(8, 8, 8, 8))
-        painter.drawEllipse(QRectF(10.5, 10.5, 3, 3))
-        for start, end in (
-            ((12, 4), (12, 8)), ((12, 16), (12, 20)),
-            ((4, 12), (8, 12)), ((16, 12), (20, 12)),
-            ((6.3, 6.3), (9, 9)), ((15, 15), (17.7, 17.7)),
-            ((17.7, 6.3), (15, 9)), ((9, 15), (6.3, 17.7)),
-        ):
-            painter.drawLine(QPointF(*start), QPointF(*end))
+        # Six-tooth outline gear, sized to fill the same visual area as
+        # the rebuild icon. Both the gear body and hub remain unfilled.
+        gear = QPainterPath()
+        center = QPointF(12, 12)
+        outline_points: list[tuple[float, float]] = []
+        for tooth in range(6):
+            tooth_center = -90 + tooth * 60
+            outline_points.extend(
+                (
+                    (tooth_center - 30, 7.2),
+                    (tooth_center - 12, 9.6),
+                    (tooth_center + 12, 9.6),
+                    (tooth_center + 30, 7.2),
+                )
+            )
+        for index, (angle_degrees, radius) in enumerate(outline_points):
+            angle = math.radians(angle_degrees)
+            point = QPointF(
+                center.x() + math.cos(angle) * radius,
+                center.y() + math.sin(angle) * radius,
+            )
+            if index == 0:
+                gear.moveTo(point)
+            else:
+                gear.lineTo(point)
+        gear.closeSubpath()
+        painter.drawPath(gear)
+        painter.drawEllipse(QRectF(8.7, 8.7, 6.6, 6.6))
 
     painter.end()
     return QIcon(pixmap)
@@ -1100,11 +1120,13 @@ class MainWindow(QMainWindow):
         self.rebuild_button.setIcon(
             self._standard_icon(QStyle.StandardPixmap.SP_BrowserReload)
         )
+        self.rebuild_button.setIconSize(QSize(17, 17))
         self.rebuild_button.setToolTip("重新扫描全部 Markdown 笔记")
         self.rebuild_button.clicked.connect(self.rebuild_index)
         layout.addWidget(self.rebuild_button)
         self.settings_button = QPushButton("设置")
         self.settings_button.setIcon(_painted_icon("gear", self.theme))
+        self.settings_button.setIconSize(QSize(17, 17))
         self.settings_button.setToolTip("打开个性化设置")
         self.settings_button.clicked.connect(lambda: self._switch_page(3))
         layout.addWidget(self.settings_button)
@@ -1830,7 +1852,9 @@ class MainWindow(QMainWindow):
         self.rebuild_button.setIcon(
             self._standard_icon(QStyle.StandardPixmap.SP_BrowserReload)
         )
+        self.rebuild_button.setIconSize(icon_size)
         self.settings_button.setIcon(_painted_icon("gear", self.theme))
+        self.settings_button.setIconSize(icon_size)
         self.search_button.setIcon(
             self._standard_icon(QStyle.StandardPixmap.SP_ArrowForward)
         )

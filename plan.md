@@ -201,7 +201,15 @@ class TeachSession:
 
 ### 4.2 权重计算
 
-对每个查询词项 t，对每篇文档 d：
+首先去除查询首尾空白，得到完整查询词 `q`，并使用
+`jieba.cut_for_search(q)` 得到去重后的搜索模式分词。查询词项及其查询权重
+`query_weight(t)` 按以下规则确定：
+
+- 完整查询词 `q` 始终参与检索，权重为 `1.0`
+- 当查询还能拆分出不同于 `q` 的词项时，这些拆分词的权重为 `0.2`
+- 当分词结果只有完整查询词时，其权重仍为 `1.0`
+
+对每个查询词项 t、每篇文档 d，先计算字段得分：
 
 ```
 score(d, t) = title_tf   × 3.0
@@ -214,9 +222,13 @@ score(d, t) = title_tf   × 3.0
 文档总得分：
 
 ```
-total_score(d, query) = Σ score(d, t)   for each t in jieba.cut(query)
+total_score(d, query) = Σ [score(d, t) × query_weight(t)]
                       + (exam_freq / 5.0) × 0.5   # 考点频率加分
 ```
+
+完整查询词优先保证短语的精确匹配；搜索模式产生的拆分词以较低权重补充召回，
+避免拆分词数量过多时压过完整短语命中结果。最终得分保留两位小数，并按得分
+降序返回前 `top_k` 条结果。
 
 ### 4.3 过滤
 
@@ -228,7 +240,9 @@ total_score(d, query) = Σ score(d, t)   for each t in jieba.cut(query)
 
 ### 4.4 分词
 
-使用 `jieba.cut_for_search()` 兼顾召回率。
+使用 `jieba.cut_for_search()` 兼顾召回率。分词结果按首次出现顺序去重；若结果中
+没有完整查询词，则额外将完整查询词加入词项列表。完整查询词权重为 `1.0`，
+不同于完整查询词的拆分词权重为 `0.2`。
 
 ---
 

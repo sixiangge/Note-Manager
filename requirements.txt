@@ -8,6 +8,7 @@ python-frontmatter>=1.0.0
 # ======== Phase 2（当前必须安装）========
 PyQt6>=6.5.0
 matplotlib>=3.8
+pywin32>=306; sys_platform == "win32"  # Windows 任务栏应用标识与图标
 
 # ======== Phase 3（远期，按需安装）========
 # chromadb>=0.4.0          # 向量数据库

@@ -2,11 +2,11 @@
 
 import sys
 import sqlite3
-import tempfile
 from pathlib import Path
 
 
 _qt_message_handler = None
+_WINDOWS_APP_ID = "NoteManager.Desktop.2026"
 
 
 def _set_windows_app_id() -> None:
@@ -17,7 +17,7 @@ def _set_windows_app_id() -> None:
         import ctypes
 
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-            "NoteManager.Desktop"
+            _WINDOWS_APP_ID
         )
     except (AttributeError, OSError):
         pass
@@ -47,9 +47,14 @@ def _install_qt_message_filter() -> None:
 
 
 def _create_app_icon():
-    """Draw the application icon in memory without decoding image files."""
+    """Load the packaged application icon, with an in-memory fallback."""
     from PyQt6.QtCore import QPointF, QRectF, Qt
     from PyQt6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
+
+    icon_path = Path(__file__).resolve().parent / "assets" / "notemanager.ico"
+    packaged_icon = QIcon(str(icon_path))
+    if not packaged_icon.isNull():
+        return packaged_icon
 
     icon = QIcon()
     for size in (16, 20, 24, 32, 40, 48, 64, 128, 256):
@@ -96,58 +101,35 @@ def _create_app_icon():
 
 
 def _set_window_icon(window, icon) -> None:
-    """Set both Qt and native Windows icons used by the taskbar."""
+    """Set the Qt window icon."""
     window.setWindowIcon(icon)
+
+
+def _set_windows_taskbar_properties(window, base_dir: Path) -> None:
+    """Associate the native window with NoteManager's taskbar icon."""
     if sys.platform != "win32":
         return
     try:
-        import ctypes
+        from win32com.propsys import propsys, pscon
 
-        icon_dir = Path(tempfile.gettempdir()) / "NoteManager"
-        icon_dir.mkdir(parents=True, exist_ok=True)
-        icon_path = icon_dir / "notemanager.ico"
-        if not icon.pixmap(256, 256).save(str(icon_path), "ICO"):
+        icon_path = (
+            Path(base_dir) / "src" / "gui" / "assets" / "notemanager.ico"
+        ).resolve()
+        if not icon_path.is_file():
             return
-
-        user32 = ctypes.windll.user32
-        user32.LoadImageW.argtypes = (
-            ctypes.c_void_p,
-            ctypes.c_wchar_p,
-            ctypes.c_uint,
-            ctypes.c_int,
-            ctypes.c_int,
-            ctypes.c_uint,
+        store = propsys.SHGetPropertyStoreForWindow(
+            int(window.winId()), propsys.IID_IPropertyStore
         )
-        user32.LoadImageW.restype = ctypes.c_void_p
-        user32.SendMessageW.argtypes = (
-            ctypes.c_void_p,
-            ctypes.c_uint,
-            ctypes.c_void_p,
-            ctypes.c_void_p,
+        store.SetValue(
+            pscon.PKEY_AppUserModel_ID,
+            propsys.PROPVARIANTType(_WINDOWS_APP_ID),
         )
-        user32.SendMessageW.restype = ctypes.c_ssize_t
-
-        image_icon = 1
-        load_from_file = 0x0010
-        wm_set_icon = 0x0080
-        icon_small = 0
-        icon_big = 1
-        big_handle = user32.LoadImageW(
-            None, str(icon_path), image_icon, 32, 32, load_from_file
+        store.SetValue(
+            pscon.PKEY_AppUserModel_RelaunchIconResource,
+            propsys.PROPVARIANTType(f"{icon_path},0"),
         )
-        small_handle = user32.LoadImageW(
-            None, str(icon_path), image_icon, 16, 16, load_from_file
-        )
-        if big_handle:
-            user32.SendMessageW(
-                int(window.winId()), wm_set_icon, icon_big, big_handle
-            )
-        if small_handle:
-            user32.SendMessageW(
-                int(window.winId()), wm_set_icon, icon_small, small_handle
-            )
-        window._notemanager_native_icon_handles = (big_handle, small_handle)
-    except (AttributeError, OSError, TypeError, ValueError):
+        store.Commit()
+    except (ImportError, OSError, TypeError):
         pass
 
 
@@ -248,6 +230,7 @@ def run_gui(base_dir: Path, notes_root: Path, index_path: Path) -> int:
                 _set_window_icon(window, app_icon)
                 splash.update_progress(96, "正在恢复界面状态")
                 window.show()
+                _set_windows_taskbar_properties(window, Path(base_dir))
                 set_windows_title_bar_theme(window, window.theme)
                 splash.update_progress(100, "加载完成")
                 app.processEvents()
