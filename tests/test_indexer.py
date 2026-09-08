@@ -105,6 +105,16 @@ class TestBuildIndex(unittest.TestCase):
         index = build_index(notes)
         self.assertEqual(len(index["documents"]), 1)
 
+    def test_index_filters_punctuation_and_preserves_mixed_term(self):
+        content = NOTE_EXAM.replace(
+            "二叉树的四种遍历方式",
+            "E-R模型的四种表示方式 ---",
+        )
+        notes = _make_notes_dir({"数据库/E-R模型.md": content})
+        inverted = build_index(notes)["inverted_index"]
+        self.assertIn("E-R模型", inverted)
+        self.assertNotIn("-", inverted)
+
 
 class TestSaveLoadIndex(unittest.TestCase):
     """测试索引的持久化与加载。"""

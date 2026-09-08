@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.searcher import search
+from src.searcher import _query_terms, search
 
 # 手工构造的索引：三篇笔记
 # - 笔记A: 标题含"极限"，exam 类型
@@ -127,6 +127,31 @@ class TestSearch(unittest.TestCase):
         }
         results = search("算法", freq_index)
         self.assertEqual(results[0]["title"], "B")  # 1.0 + 0.5 > 1.0 + 0.0
+
+    def test_mixed_term_query_keeps_exact_term_and_filters_hyphen(self):
+        terms = dict(_query_terms("E-R模型"))
+        self.assertEqual(terms["E-R模型"], 1.0)
+        self.assertNotIn("-", terms)
+
+    def test_mixed_term_exact_match_beats_markdown_hyphens(self):
+        index = {
+            "documents": {
+                "relevant.md": {
+                    "title": "概念模型", "subject": "数据库", "chapter": "",
+                    "tags": ["E-R模型"], "note_type": "exam", "exam_freq": 0,
+                },
+                "irrelevant.md": {
+                    "title": "长列表", "subject": "其他", "chapter": "",
+                    "tags": [], "note_type": "exam", "exam_freq": 5,
+                },
+            },
+            "inverted_index": {
+                "E-R模型": {"relevant.md": {"tags": 1}},
+                "-": {"irrelevant.md": {"body": 100}},
+            },
+        }
+        results = search("E-R模型", index)
+        self.assertEqual([result["title"] for result in results], ["概念模型"])
 
 
 if __name__ == "__main__":

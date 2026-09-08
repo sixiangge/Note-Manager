@@ -5,13 +5,15 @@ from __future__ import annotations
 import os
 import re
 import tempfile
+from hashlib import sha256
 from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import QUrl
-from PyQt6.QtGui import QColor, QImage, QTextDocument, QTextTable
+from PyQt6.QtCore import QByteArray, QStandardPaths, Qt, QUrl
+from PyQt6.QtGui import QColor, QImage, QPainter, QTextDocument, QTextTable
+from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PyQt6.QtWidgets import QTextBrowser
 
 
@@ -29,6 +31,26 @@ _CODE_SIZES = {"small": 9.5, "standard": 10.5, "large": 12.0}
 _CJK_TEXT_RE = re.compile(r"[\u3400-\u9fff，。；：、！？（）]+")
 _FRAC_COMMAND_RE = re.compile(r"\\frac(?![A-Za-z])")
 _MATH_COMMAND_RE = re.compile(r"\\(?:[A-Za-z]+|.)")
+_BARE_BR_RE = re.compile(r"<br\s*>", re.IGNORECASE)
+_BARE_IMG_RE = re.compile(r"<img\b([^<>]*?)(?<!/)>", re.IGNORECASE)
+_CJK_TEXT_COMMAND_RE = re.compile(
+    r"\\(?:text|textrm|textsf|mathrm|mathbf|mathit|operatorname)\s*"
+    r"\{([^{}]*[\u3400-\u9fff][^{}]*)\}"
+)
+_CJK_SCRIPT_RE = re.compile(r"[_^]\s*\{([^{}]*[\u3400-\u9fff][^{}]*)\}")
+_CJK_BARE_SCRIPT_RE = re.compile(r"[_^]\s*([\u3400-\u9fff]+)")
+_MAX_NETWORK_IMAGE_BYTES = 20 * 1024 * 1024
+_NETWORK_IMAGE_TIMEOUT_MS = 15_000
+_CASES_RE = re.compile(r"\\begin\{cases\}(.+?)\\end\{cases\}", re.DOTALL)
+
+
+def _default_image_cache_dir() -> Path:
+    root = QStandardPaths.writableLocation(
+        QStandardPaths.StandardLocation.CacheLocation
+    )
+    if not root:
+        root = str(Path(tempfile.gettempdir()) / "NoteManager")
+    return Path(root) / "markdown-images"
 
 
 def _matplotlib_cache_dir() -> Path:
@@ -49,6 +71,15 @@ def _math_parser() -> tuple[Any, Any]:
 
 
 def _mixed_cjk_math(expression: str) -> str:
+    # MathText cannot combine its commands/braces with separately rendered
+    # CJK runs. Preserve the readable CJK content instead of letting the
+    # entire display formula fail (for example ``\text{中文}`` or ``x_{中文}``).
+    previous = None
+    while expression != previous:
+        previous = expression
+        expression = _CJK_TEXT_COMMAND_RE.sub(r"\1", expression)
+    expression = _CJK_SCRIPT_RE.sub(r" \1", expression)
+    expression = _CJK_BARE_SCRIPT_RE.sub(r" \1", expression)
     parts = re.split(f"({_CJK_TEXT_RE.pattern})", expression)
     mixed: list[str] = []
     for part in parts:
@@ -62,6 +93,40 @@ def _mixed_cjk_math(expression: str) -> str:
         core = part.strip()
         mixed.append(f"{leading}${core}${trailing}" if core else part)
     return "".join(mixed)
+
+
+def _normalize_table_breaks(markdown: str) -> str:
+    """Make unsafe HTML void elements safe for Qt's Markdown reader.
+
+    Qt's Markdown reader treats ``<br>`` in a table as the start of an
+    unclosed HTML block and can swallow everything through end-of-file. The
+    same happens with bare ``<img>`` tags. Their self-closing forms render
+    correctly, so normalize them while leaving fenced code untouched.
+    """
+    output: list[str] = []
+    active_fence: tuple[str, int] | None = None
+    for line in markdown.splitlines(keepends=True):
+        fence_match = _FENCE_RE.match(line)
+        if active_fence is None and fence_match:
+            marker = fence_match.group(1)
+            active_fence = (marker[0], len(marker))
+            output.append(line)
+            continue
+        if active_fence is not None:
+            output.append(line)
+            if fence_match:
+                marker = fence_match.group(1)
+                if marker[0] == active_fence[0] and len(marker) >= active_fence[1]:
+                    active_fence = None
+            continue
+        stripped = line.strip()
+        safe_line = (
+            _BARE_BR_RE.sub("<br />", line)
+            if stripped.startswith("|") and stripped.endswith("|")
+            else line
+        )
+        output.append(_BARE_IMG_RE.sub(r"<img\1 />", safe_line))
+    return "".join(output)
 
 
 def _normalize_fraction_arguments(expression: str) -> str:
@@ -113,7 +178,23 @@ def _normalize_math_expression(expression: str) -> str:
     """Translate common TeX aliases into MathText-compatible syntax."""
     normalized = re.sub(r"\\le(?![A-Za-z])", r"\\leq", expression)
     normalized = re.sub(r"\\ge(?![A-Za-z])", r"\\geq", normalized)
+    normalized = _CASES_RE.sub(_normalize_cases, normalized)
+    # MathText rejects physical newlines inside its surrounding $...$ span.
+    # Explicit LaTeX row separators (``\\``) are unaffected.
+    normalized = re.sub(r"[\r\n]+", " ", normalized).strip()
     return _normalize_fraction_arguments(normalized)
+
+
+def _normalize_cases(match: re.Match[str]) -> str:
+    """Translate a LaTeX cases block to MathText's supported substack form."""
+    body = match.group(1).strip().replace(r"\displaystyle", "")
+    body = body.replace("&", r"\quad ")
+    body = re.sub(
+        r"\\text\{([^{}]*)\}",
+        lambda text: r"\mathrm{" + text.group(1).strip().replace(" ", r"\ ") + "}",
+        body,
+    )
+    return r"\left\{\substack{" + body + r"}\right."
 
 
 def _render_cjk_formula(expression: str, font_size: int, color: str) -> QImage:
@@ -144,12 +225,12 @@ def _render_formula(
     size_offset: int,
 ) -> QImage:
     font_size = (15 if display else 14) + size_offset
+    expression = _normalize_math_expression(expression)
     if _CJK_TEXT_RE.search(expression):
         return _render_cjk_formula(expression, font_size, color)
 
     import numpy as np
 
-    expression = _normalize_math_expression(expression)
     parser, font_properties = _math_parser()
     parsed = parser.parse(
         f"${expression.strip()}$",
@@ -311,10 +392,23 @@ def _style_body(
     return re.sub(r'<body style="[^"]*">', body_style, html, count=1)
 
 
-class MarkdownPreview(QTextBrowser):
-    """Read-only Markdown browser with local formula resources."""
+def _decode_network_image(data: bytes, content_type: str = "") -> QImage:
+    """Validate and decode an image downloaded for the Markdown preview."""
+    if not data or len(data) > _MAX_NETWORK_IMAGE_BYTES:
+        return QImage()
+    media_type = content_type.partition(";")[0].strip().lower()
+    if media_type and not (
+        media_type.startswith("image/")
+        or media_type in {"application/octet-stream", "binary/octet-stream"}
+    ):
+        return QImage()
+    return QImage.fromData(QByteArray(data))
 
-    def __init__(self, parent=None) -> None:
+
+class MarkdownPreview(QTextBrowser):
+    """Read-only Markdown browser with formula, local, and network images."""
+
+    def __init__(self, parent=None, *, image_cache_dir: Path | None = None) -> None:
         super().__init__(parent)
         self._formula_images: dict[str, QImage] = {}
         self._markdown = ""
@@ -324,6 +418,78 @@ class MarkdownPreview(QTextBrowser):
         self._code_size = "standard"
         self._body_font = "system"
         self._code_font = "system"
+        self._network_manager = QNetworkAccessManager(self)
+        self._image_cache: dict[str, QImage] = {}
+        self._scaled_image_cache: dict[tuple[str, int], QImage] = {}
+        self._image_cache_dir = image_cache_dir or _default_image_cache_dir()
+        self._pending_images: dict[str, QNetworkReply] = {}
+        self._failed_images: set[str] = set()
+        self._loading_image = self._make_image_notice("正在加载图片…")
+        self._failed_image = self._make_image_notice("图片加载失败")
+
+    def _make_image_notice(self, text: str) -> QImage:
+        """Create a small theme-neutral fallback shown during image loading."""
+        image = QImage(240, 44, QImage.Format.Format_ARGB32_Premultiplied)
+        image.fill(QColor("#f4f6f8"))
+        painter = QPainter(image)
+        painter.setPen(QColor("#72767d"))
+        painter.drawRect(0, 0, image.width() - 1, image.height() - 1)
+        painter.drawText(image.rect(), Qt.AlignmentFlag.AlignCenter, text)
+        painter.end()
+        return image
+
+    def _fit_image(self, image: QImage, cache_key: str = "") -> QImage:
+        """Show Markdown images at two thirds size and fit them to the view."""
+        if image.isNull():
+            return image
+        available_width = max(64, self.viewport().width() - 24)
+        target_width = min(available_width, max(1, round(image.width() * 2 / 3)))
+        scaled_key = (cache_key, target_width)
+        if cache_key and scaled_key in self._scaled_image_cache:
+            return self._scaled_image_cache[scaled_key]
+        scaled = image.scaledToWidth(
+            target_width,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        if cache_key:
+            self._scaled_image_cache[scaled_key] = scaled
+        return scaled
+
+    def _disk_image_path(self, url: str) -> Path:
+        """Map a network URL to a filesystem-safe persistent cache key."""
+        return self._image_cache_dir / f"{sha256(url.encode('utf-8')).hexdigest()}.img"
+
+    def _load_disk_image(self, url: str) -> QImage:
+        path = self._disk_image_path(url)
+        try:
+            if not path.is_file() or path.stat().st_size > _MAX_NETWORK_IMAGE_BYTES:
+                return QImage()
+            image = QImage(str(path))
+        except OSError:
+            return QImage()
+        if image.isNull():
+            try:
+                path.unlink()
+            except OSError:
+                pass
+        return image
+
+    def _store_disk_image(self, url: str, data: bytes) -> None:
+        """Persist validated network bytes, replacing an older cache entry."""
+        temporary: Path | None = None
+        try:
+            self._image_cache_dir.mkdir(parents=True, exist_ok=True)
+            target = self._disk_image_path(url)
+            temporary = target.with_suffix(".tmp")
+            temporary.write_bytes(data)
+            temporary.replace(target)
+        except OSError:
+            # A read-only or full cache location must not break note rendering.
+            try:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def set_render_settings(
         self,
@@ -360,6 +526,9 @@ class MarkdownPreview(QTextBrowser):
     def set_markdown(self, markdown: str, base_path: Path | None = None) -> None:
         self._markdown = markdown
         self._base_path = base_path
+        # A temporary network failure should not remain permanent after the
+        # user reopens or refreshes a note.
+        self._failed_images.clear()
         self._render()
 
     def _render(self) -> None:
@@ -383,7 +552,7 @@ class MarkdownPreview(QTextBrowser):
             else f"'{self._code_font}','Consolas',monospace"
         )
         processed, self._formula_images = _replace_math(
-            self._markdown, text_color, size_offset
+            _normalize_table_breaks(self._markdown), text_color, size_offset
         )
         document = QTextDocument()
         document.setDefaultStyleSheet(
@@ -418,14 +587,97 @@ class MarkdownPreview(QTextBrowser):
         self.setHtml(html)
 
     def loadResource(self, resource_type: int, name: QUrl):
-        if (
-            resource_type == QTextDocument.ResourceType.ImageResource
-            and name.scheme() == "formula"
-        ):
+        if resource_type != QTextDocument.ResourceType.ImageResource:
+            return super().loadResource(resource_type, name)
+
+        if name.scheme() == "formula":
             image = self._formula_images.get(name.host())
             if image is not None:
                 return image
+
+        scheme = name.scheme().lower()
+        key = name.toString()
+        if scheme in {"http", "https"}:
+            cached = self._image_cache.get(key)
+            if cached is not None:
+                return self._fit_image(cached, key)
+            cached = self._load_disk_image(key)
+            if not cached.isNull():
+                self._image_cache[key] = cached
+                return self._fit_image(cached, key)
+            if key in self._failed_images:
+                return self._failed_image
+            if key not in self._pending_images:
+                self._request_network_image(name, key)
+            return self._loading_image
+
+        local_path: Path | None = None
+        if scheme == "file":
+            local_path = Path(name.toLocalFile())
+        elif len(scheme) == 1 and name.path().startswith(("/", "\\")):
+            # Qt parses a raw Windows path in Markdown as a URL whose scheme
+            # is the drive letter (for example ``C:\\...`` -> scheme ``c``).
+            local_path = Path(f"{scheme.upper()}:{name.path()}")
+        elif not scheme and self._base_path is not None:
+            local_path = self._base_path / name.path()
+        if local_path is not None:
+            cache_key = str(local_path.resolve())
+            cached = self._image_cache.get(cache_key)
+            if cached is not None:
+                return self._fit_image(cached, cache_key)
+            image = QImage(str(local_path))
+            if not image.isNull():
+                self._image_cache[cache_key] = image
+                return self._fit_image(image, cache_key)
         return super().loadResource(resource_type, name)
+
+    def _request_network_image(self, url: QUrl, key: str) -> None:
+        """Start one asynchronous HTTP(S) image request."""
+        request = QNetworkRequest(url)
+        request.setAttribute(
+            QNetworkRequest.Attribute.RedirectPolicyAttribute,
+            QNetworkRequest.RedirectPolicy.NoLessSafeRedirectPolicy,
+        )
+        request.setTransferTimeout(_NETWORK_IMAGE_TIMEOUT_MS)
+        request.setRawHeader(b"User-Agent", b"NoteManager/1.0")
+        reply = self._network_manager.get(request)
+        self._pending_images[key] = reply
+        reply.finished.connect(lambda: self._finish_network_image(key, url, reply))
+
+    def _finish_network_image(
+        self,
+        key: str,
+        resource_url: QUrl,
+        reply: QNetworkReply,
+    ) -> None:
+        """Decode a completed request and replace its document resource."""
+        self._pending_images.pop(key, None)
+        image = QImage()
+        data = b""
+        if reply.error() == QNetworkReply.NetworkError.NoError:
+            content_type = bytes(
+                reply.rawHeader(b"Content-Type")
+            ).decode("ascii", errors="ignore")
+            data = bytes(reply.readAll())
+            image = _decode_network_image(data, content_type)
+        reply.deleteLater()
+
+        if image.isNull():
+            self._failed_images.add(key)
+            replacement = self._failed_image
+        else:
+            self._image_cache[key] = image
+            self._store_disk_image(key, data)
+            self._failed_images.discard(key)
+            replacement = self._fit_image(image, key)
+
+        self.document().addResource(
+            QTextDocument.ResourceType.ImageResource,
+            resource_url,
+            replacement,
+        )
+        self.document().markContentsDirty(0, self.document().characterCount())
+        self.viewport().update()
 
     def clear(self) -> None:
         self._markdown = ""

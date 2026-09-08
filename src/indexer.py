@@ -9,9 +9,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import jieba
-
 from src.parsers.markdown_parser import Note, parse_markdown
+from src.tokenizer import tokenize
 
 # 索引的字段名与正文分词字段
 INDEXED_FIELDS = ("title", "subject", "chapter", "tags", "body")
@@ -28,7 +27,7 @@ def _tokenize(text: str) -> list[str]:
     """
     if not text:
         return []
-    return [t.strip() for t in jieba.cut_for_search(text) if t.strip()]
+    return tokenize(text)
 
 
 def _field_frequencies(note: Note) -> dict[str, dict[str, int]]:

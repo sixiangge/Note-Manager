@@ -4,7 +4,7 @@
 权重规则见 plan.md §4.2。
 """
 
-import jieba
+from src.tokenizer import tokenize
 
 # 字段权重：title 最高，body 最低
 FIELD_WEIGHTS = {
@@ -30,7 +30,7 @@ def _query_terms(query: str) -> list[tuple[str, float]]:
     if not query or not query.strip():
         return []
     normalized_query = query.strip()
-    tokens = [t.strip() for t in jieba.cut_for_search(normalized_query) if t.strip()]
+    tokens = tokenize(normalized_query)
     seen: set[str] = set()
     result: list[str] = []
     for t in tokens:

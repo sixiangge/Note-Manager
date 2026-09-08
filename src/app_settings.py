@@ -27,6 +27,7 @@ DEFAULT_APP_SETTINGS: dict[str, Any] = {
     "external_cache_policy": "discard",
     "last_note_path": "",
     "last_note_scroll": 0,
+    "note_order": {},
 }
 
 
@@ -81,6 +82,14 @@ def normalized_settings(
     last_scroll = values.get("last_note_scroll")
     if isinstance(last_scroll, int) and not isinstance(last_scroll, bool):
         settings["last_note_scroll"] = max(0, last_scroll)
+
+    note_order = values.get("note_order")
+    if isinstance(note_order, dict):
+        settings["note_order"] = {
+            subject: [path for path in paths if isinstance(path, str)]
+            for subject, paths in note_order.items()
+            if isinstance(subject, str) and isinstance(paths, list)
+        }
 
     notes_root = Path(settings["notes_root"]).expanduser()
     settings["notes_root"] = str(notes_root.resolve())

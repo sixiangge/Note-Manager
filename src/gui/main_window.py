@@ -13,9 +13,12 @@ from pathlib import Path
 from typing import Any
 
 from PyQt6.QtCore import (
+    QEasingCurve,
+    QElapsedTimer,
     QPoint,
     QPointF,
     QProcess,
+    QRect,
     QRectF,
     QObject,
     QSize,
@@ -23,12 +26,15 @@ from PyQt6.QtCore import (
     QThread,
     QTimer,
     QUrl,
+    QVariantAnimation,
     pyqtSignal,
 )
 from PyQt6.QtGui import (
     QAction,
     QColor,
+    QCursor,
     QDesktopServices,
+    QDrag,
     QFont,
     QIcon,
     QPainter,
@@ -40,6 +46,7 @@ from PyQt6.QtGui import (
     QTextOption,
 )
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QButtonGroup,
     QFrame,
@@ -56,6 +63,8 @@ from PyQt6.QtWidgets import (
     QSplitter,
     QStackedWidget,
     QStyle,
+    QStyleOptionViewItem,
+    QStyledItemDelegate,
     QTextBrowser,
     QTextEdit,
     QToolButton,
@@ -90,6 +99,10 @@ from src.storage import (
     sync_note_catalog,
     trim_search_history,
 )
+
+
+# One-line rollback switch for note-only manual ordering.
+ENABLE_MANUAL_NOTE_ORDER = True
 
 
 APP_STYLE = """
@@ -215,6 +228,7 @@ QScrollBar:vertical {
 }
 QScrollBar::handle:vertical {
     min-height: 28px;
+    margin: 0 4px;
     border: 0;
     background: #111111;
 }
@@ -229,7 +243,7 @@ QScrollBar::sub-page:vertical {
     background: #ffffff;
 }
 QScrollBar:horizontal {
-    height: 12px;
+    height: 4px;
     margin: 0;
     border: 0;
     background: #ffffff;
@@ -391,7 +405,9 @@ def build_app_style(theme: str, scale: int) -> str:
         "font-size: 24px": f"font-size: {round(24 * factor)}px",
         "min-height: 32px": f"min-height: {round(32 * factor)}px",
         "width: 12px": f"width: {max(10, round(12 * factor))}px",
-        "height: 12px": f"height: {max(10, round(12 * factor))}px",
+        "margin: 0 4px": f"margin: 0 {max(3, round(4 * factor))}px",
+        "width: 4px": f"width: {max(3, round(4 * factor))}px",
+        "height: 4px": f"height: {max(3, round(4 * factor))}px",
     }
     for source, target in replacements.items():
         style = style.replace(source, target)
@@ -504,6 +520,243 @@ def _painted_icon(name: str, theme: str = "light") -> QIcon:
 
     painter.end()
     return QIcon(pixmap)
+
+
+class AnimatedTreeDelegate(QStyledItemDelegate):
+    """Paint tree rows with short vertical ease-out transitions."""
+
+    def __init__(self, tree: "OrderedSubjectTree") -> None:
+        super().__init__(tree)
+        self.tree = tree
+        self.offsets: dict[int, float] = {}
+        self.animation = QVariantAnimation(self)
+        self.animation.setDuration(280)
+        self.animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.animation.valueChanged.connect(self._advance)
+        self.animation.finished.connect(self._finish)
+        self._starts: dict[int, float] = {}
+        self.release_animation = QVariantAnimation(self)
+        self.release_animation.setDuration(240)
+        self.release_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.release_animation.setStartValue(1.035)
+        self.release_animation.setEndValue(1.0)
+        self.release_animation.valueChanged.connect(self._advance_release)
+        self.release_animation.finished.connect(self._finish_release)
+        self._release_item_id: int | None = None
+        self._release_scale = 1.0
+
+    def paint(self, painter, option, index) -> None:
+        item = self.tree.itemFromIndex(index)
+        painter.save()
+        painter.translate(0, self.offsets.get(id(item), 0.0))
+        if id(item) == self._release_item_id:
+            center = option.rect.center()
+            painter.translate(center)
+            painter.scale(self._release_scale, self._release_scale)
+            painter.translate(-center.x(), -center.y())
+        if item is self.tree.dragged_item:
+            painter.setOpacity(0.18)
+        super().paint(painter, option, index)
+        painter.restore()
+
+    def visual_offset(self, item: QTreeWidgetItem) -> float:
+        return self.offsets.get(id(item), 0.0)
+
+    def animate_to_layout(
+        self, old_tops: list[tuple[QTreeWidgetItem, float]]
+    ) -> None:
+        self.animation.stop()
+        self._starts = {
+            id(item): old_top - self.tree.visualItemRect(item).top()
+            for item, old_top in old_tops
+        }
+        self.offsets = dict(self._starts)
+        self.animation.setStartValue(0.0)
+        self.animation.setEndValue(1.0)
+        self.animation.start()
+
+    def animate_release(self, item: QTreeWidgetItem) -> None:
+        self._release_item_id = id(item)
+        self._release_scale = 1.035
+        self.release_animation.stop()
+        self.release_animation.start()
+
+    def _advance(self, value: Any) -> None:
+        progress = float(value)
+        self.offsets = {
+            item_id: start * (1.0 - progress)
+            for item_id, start in self._starts.items()
+        }
+        self.tree.viewport().update()
+
+    def _finish(self) -> None:
+        self.offsets.clear()
+        self._starts.clear()
+        self.tree.viewport().update()
+
+    def _advance_release(self, value: Any) -> None:
+        self._release_scale = float(value)
+        self.tree.viewport().update()
+
+    def _finish_release(self) -> None:
+        self._release_item_id = None
+        self._release_scale = 1.0
+        self.tree.viewport().update()
+
+
+class OrderedSubjectTree(QTreeWidget):
+    """Tree allowing animated reordering of notes within one subject only."""
+
+    order_changed = pyqtSignal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.setDragDropOverwriteMode(False)
+        self.setAutoScroll(False)
+        self.setAutoExpandDelay(-1)
+        self.dragged_item: QTreeWidgetItem | None = None
+        self._press_timer = QElapsedTimer()
+        self._delegate = AnimatedTreeDelegate(self)
+        self.setItemDelegate(self._delegate)
+        self._active_drag: QDrag | None = None
+        self._drag_visual_left = 0
+        self._drag_hotspot_y = 0
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._press_timer.start()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        # Require a short hold before entering drag mode; ordinary clicks and
+        # quick pointer motions retain their original behavior.
+        if (
+            event.buttons() & Qt.MouseButton.LeftButton
+            and self._press_timer.isValid()
+            and self._press_timer.elapsed() < 180
+        ):
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        self._press_timer.invalidate()
+        super().mouseReleaseEvent(event)
+
+    def startDrag(self, supported_actions) -> None:
+        item = self.currentItem()
+        # Subject folders keep the default fixed ordering and never drag.
+        if item is None or item.parent() is None:
+            return
+        rect = self.visualItemRect(item)
+        scale_x, scale_y = 1.03, 1.06
+        logical_size = QSize(
+            max(1, round(rect.width() * scale_x)),
+            max(1, round(rect.height() * scale_y)),
+        )
+        # Repaint the row at high pixel density instead of scaling a captured
+        # bitmap. This keeps text and icons sharp while the drag item is lifted.
+        pixel_ratio = max(2.0, self.viewport().devicePixelRatioF())
+        lifted = QPixmap(
+            round(logical_size.width() * pixel_ratio),
+            round(logical_size.height() * pixel_ratio),
+        )
+        lifted.setDevicePixelRatio(pixel_ratio)
+        lifted.fill(Qt.GlobalColor.transparent)
+        index = self.indexFromItem(item)
+        option = QStyleOptionViewItem()
+        self.initViewItemOption(option)
+        option.rect = QRect(0, 0, rect.width(), rect.height())
+        self._delegate.initStyleOption(option, index)
+        painter = QPainter(lifted)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        painter.scale(scale_x, scale_y)
+        self._delegate.paint(painter, option, index)
+        painter.end()
+
+        drag = QDrag(self)
+        drag.setMimeData(self.mimeData([item]))
+        drag.setPixmap(lifted)
+        pointer = self.viewport().mapFromGlobal(QCursor.pos())
+        hotspot_x = pointer.x() - rect.left()
+        self._drag_visual_left = rect.left()
+        self._drag_hotspot_y = logical_size.height() // 2
+        drag.setHotSpot(
+            QPoint(hotspot_x, self._drag_hotspot_y)
+        )
+        self._active_drag = drag
+        self.dragged_item = item
+        self.viewport().update()
+        drag.exec(Qt.DropAction.MoveAction)
+        self._active_drag = None
+        self.dragged_item = None
+        self._delegate.animate_release(item)
+        self.viewport().update()
+
+    def dragMoveEvent(self, event) -> None:
+        """Swap only with an adjacent sibling as the pointer moves vertically."""
+        source = self.currentItem()
+        pointer = event.position().toPoint()
+        if self._active_drag is not None:
+            # Keep the drag pixmap's left edge anchored to its original row.
+            # The mouse may move horizontally, but the visual only follows Y.
+            self._active_drag.setHotSpot(
+                QPoint(
+                    pointer.x() - self._drag_visual_left,
+                    self._drag_hotspot_y,
+                )
+            )
+        # Sample the row at a fixed horizontal coordinate so left/right mouse
+        # motion has no effect whatsoever on ordering or hierarchy.
+        target = self.itemAt(QPoint(self.viewport().width() // 2, pointer.y()))
+        if source is None:
+            event.ignore()
+            return
+
+        source_parent = source.parent()
+        # Subjects are fixed; notes may only exchange with siblings.
+        if source_parent is None or target is None or target.parent() is not source_parent:
+            event.ignore()
+            return
+        source_index = source_parent.indexOfChild(source)
+        target_index = source_parent.indexOfChild(target)
+        direction = (target_index > source_index) - (target_index < source_index)
+        if direction:
+            adjacent = source_parent.child(source_index + direction)
+            old_tops = [
+                (
+                    source,
+                    self.visualItemRect(source).top()
+                    + self._delegate.visual_offset(source),
+                ),
+                (
+                    adjacent,
+                    self.visualItemRect(adjacent).top()
+                    + self._delegate.visual_offset(adjacent),
+                ),
+            ]
+            item = source_parent.takeChild(source_index)
+            source_parent.insertChild(source_index + direction, item)
+            self.setCurrentItem(source)
+            self._delegate.animate_to_layout(old_tops)
+            self.order_changed.emit()
+
+        event.setDropAction(Qt.DropAction.MoveAction)
+        event.accept()
+
+    def dropEvent(self, event) -> None:
+        """Finish the already-applied adjacent swaps without Qt moving again."""
+        if self.currentItem() is None:
+            event.ignore()
+            return
+        event.setDropAction(Qt.DropAction.MoveAction)
+        event.accept()
 
 
 class ClearableLineEdit(QLineEdit):
@@ -1110,10 +1363,14 @@ class MainWindow(QMainWindow):
         section.setContentsMargins(8, 15, 0, 2)
         layout.addWidget(section)
 
-        self.subject_tree = QTreeWidget()
+        self.subject_tree = (
+            OrderedSubjectTree() if ENABLE_MANUAL_NOTE_ORDER else QTreeWidget()
+        )
         self.subject_tree.setHeaderHidden(True)
         self.subject_tree.setIndentation(16)
         self.subject_tree.itemClicked.connect(self._on_tree_item_clicked)
+        if isinstance(self.subject_tree, OrderedSubjectTree):
+            self.subject_tree.order_changed.connect(self._on_note_order_changed)
         layout.addWidget(self.subject_tree, 1)
 
         self.rebuild_button = QPushButton("重建索引")
@@ -1505,13 +1762,28 @@ class MainWindow(QMainWindow):
                 for path, document in visible_documents
                 if "示例" not in document.get("tags", [])
             )
+        saved_note_order = (
+            self.settings.get("note_order", {}) if ENABLE_MANUAL_NOTE_ORDER else {}
+        )
+
+        def order_key(pair: tuple[str, dict[str, Any]]) -> tuple[Any, ...]:
+            path, document = pair
+            subject = str(document.get("subject", ""))
+            subject_key: tuple[Any, ...] = (subject,)
+            paths = saved_note_order.get(subject, [])
+            try:
+                note_key: tuple[Any, ...] = (0, paths.index(path))
+            except (AttributeError, ValueError):
+                note_key = (
+                    1,
+                    str(document.get("chapter", "")),
+                    str(document.get("title", "")),
+                )
+            return (*subject_key, *note_key)
+
         return sorted(
             visible_documents,
-            key=lambda pair: (
-                str(pair[1].get("subject", "")),
-                str(pair[1].get("chapter", "")),
-                str(pair[1].get("title", "")),
-            ),
+            key=order_key,
         )
 
     def _subjects(self) -> list[str]:
@@ -1532,6 +1804,7 @@ class MainWindow(QMainWindow):
             grouped.setdefault(str(doc.get("subject", "未分类")), []).append((path, doc))
         for subject, notes in grouped.items():
             parent = QTreeWidgetItem([subject])
+            parent.setFlags(parent.flags() & ~Qt.ItemFlag.ItemIsDragEnabled)
             parent.setData(0, Qt.ItemDataRole.UserRole, {"subject": subject})
             parent.setIcon(0, self._standard_icon(QStyle.StandardPixmap.SP_DirIcon))
             self.subject_tree.addTopLevelItem(parent)
@@ -1542,6 +1815,37 @@ class MainWindow(QMainWindow):
                 child.setIcon(0, self._standard_icon(QStyle.StandardPixmap.SP_FileIcon))
                 parent.addChild(child)
             parent.setExpanded(True)
+
+    def _on_note_order_changed(self) -> None:
+        """Persist the tree order and immediately mirror it in All Notes."""
+        note_order: dict[str, list[str]] = {}
+        for subject_index in range(self.subject_tree.topLevelItemCount()):
+            parent = self.subject_tree.topLevelItem(subject_index)
+            parent_data = parent.data(0, Qt.ItemDataRole.UserRole) or {}
+            subject = str(parent_data.get("subject", ""))
+            if not subject:
+                continue
+            paths: list[str] = []
+            for note_index in range(parent.childCount()):
+                child_data = (
+                    parent.child(note_index).data(0, Qt.ItemDataRole.UserRole) or {}
+                )
+                path = child_data.get("path")
+                if path:
+                    paths.append(str(path))
+            note_order[subject] = paths
+
+        self.settings["note_order"] = note_order
+        try:
+            save_app_settings(
+                self.database_path,
+                {"note_order": note_order},
+            )
+        except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+            QMessageBox.warning(self, "顺序保存失败", str(exc))
+            return
+        self._populate_library()
+        self.statusBar().showMessage("笔记顺序已保存", 3000)
 
     def _populate_subject_filter(self) -> None:
         self.subject_filter.set_items(self._subjects())
