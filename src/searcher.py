@@ -133,18 +133,30 @@ def search(query: str, index: dict, note_type: str | None = None,
     return results[:top_k]
 
 
-def retrieve_for_rag(query: str, top_k: int = 5, include_external: bool = True) -> list[dict]:
-    """🔮 Phase 3 — 为 RAG 检索上下文。
-
-    Phase 1 行为：打印提示并返回空列表。保留完整类型注解。
+def retrieve_for_rag(query: str, top_k: int = 5, include_external: bool = True,
+                     *, retriever: object = None, notes_root: object = None,
+                     subject: str | None = None, note_type: str | None = None) -> list[dict]:
+    """Retrieve from an explicit session or a disposable current-note index.
 
     Args:
         query: 用户问题
         top_k: 返回片段数
         include_external: 是否包含外部资料
+        retriever: 可选的当前会话检索器，不扫描磁盘上的外部资料缓存
+        notes_root: 可选笔记目录
+        subject: 科目过滤（创建新检索器时生效）
+        note_type: 类型过滤（创建新检索器时生效）
 
     Returns:
         [{source_type: 'note'|'external', content, metadata}]
     """
-    print("[Phase 3] RAG 检索功能尚未实现")
-    return []
+    from pathlib import Path
+    from src.rag.retriever import VectorRetriever, load_notes
+
+    source = None if include_external else "note"
+    if retriever is not None:
+        return retriever.query(query, top_k, source)
+    root = Path(notes_root) if notes_root is not None else Path(__file__).resolve().parents[1] / "data" / "notes"
+    with VectorRetriever() as temporary:
+        temporary.index_notes(load_notes(root, subject, note_type))
+        return temporary.query(query, top_k, source)

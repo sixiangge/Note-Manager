@@ -89,14 +89,31 @@ class TestCli(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("python main.py index", out)
 
-    def test_teach_placeholder(self):
-        """teach 子命令应打印占位提示并正常退出（exit 0）。"""
-        code, out = run_cli(["teach", "解释极限的定义",
-                             "--files", "C:\\tmp\\课件.pdf"])
+    def test_teach_disabled_by_default(self):
+        """An unconfigured teaching call must not send data."""
+        code, out = run_cli(["teach", "解释极限的定义"])
+        self.assertEqual(code, 1)
+        self.assertIn("启用", out)
+
+    def test_teach_connects_real_entry_point(self):
+        with mock.patch.object(main, "oracle_teach", return_value="教学回答") as teach:
+            code, out = run_cli(["teach", "解释极限", "--model", "local",
+                                 "--model-name", "test-model", "--subject", "微积分",
+                                 "--type", "exam", "--files", "课件.txt"])
         self.assertEqual(code, 0)
-        self.assertIn("Phase 3", out)
-        self.assertIn("解释极限的定义", out)
-        self.assertIn("课件.pdf", out)
+        self.assertIn("教学回答", out)
+        self.assertEqual(teach.call_args.kwargs["config"].model, "test-model")
+        self.assertEqual(teach.call_args.kwargs["files"], ["课件.txt"])
+        self.assertEqual(teach.call_args.kwargs["notes_root"], self.tmp / "notes")
+        self.assertEqual(teach.call_args.kwargs["subject"], "微积分")
+        self.assertEqual(teach.call_args.kwargs["note_type"], "exam")
+        self.assertIsNone(teach.call_args.kwargs["cache_dir"])
+
+    def test_teach_failure_returns_nonzero(self):
+        with mock.patch.object(main, "oracle_teach", side_effect=RuntimeError("连接失败")):
+            code, out = run_cli(["teach", "解释极限"])
+        self.assertEqual(code, 1)
+        self.assertIn("连接失败", out)
 
     def test_cleanup_cache_dry_run(self):
         """cleanup-cache --dry-run 只预览不删除。"""

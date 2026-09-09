@@ -19,4 +19,16 @@ class ExternalDocument:
     upload_session_id: str = ""
 
 
-__all__ = ["ExternalDocument", "Note"]
+@dataclass
+class TeachSession:
+    """One answer with inspectable sources and model-reported differences."""
+
+    user_question: str
+    recalled_notes: list[dict] = field(default_factory=list)
+    external_chunks: list[dict] = field(default_factory=list)
+    final_answer: str = ""
+    discrepancies: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+
+__all__ = ["ExternalDocument", "Note", "TeachSession"]

@@ -1,13 +1,22 @@
-"""DOCX 解析器（Phase 3 远期占位）。
-
-Phase 1-2 不实现，调用时抛出 NotImplementedError。
-"""
+"""Read Word text without Office or extracting attachment images."""
 
 from pathlib import Path
 
 from src.models import ExternalDocument
+from src.parsers.external import document_from_text
 
 
 def parse_docx(file_path: Path, chunk_size: int = 500) -> ExternalDocument:
-    """解析 DOCX 文件，提取纯文本并分块（按段落）。"""
-    raise NotImplementedError("DOCX 解析将在 Phase 3 实现")
+    """Extract paragraphs and tables.
+
+    Args:
+        file_path: Word document path.
+        chunk_size: Maximum characters per chunk.
+
+    Returns:
+        Parsed external document.
+    """
+    import docx2txt
+
+    path = Path(file_path)
+    return document_from_text(path, docx2txt.process(str(path)), chunk_size)

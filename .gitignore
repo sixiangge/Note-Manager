@@ -23,6 +23,8 @@ build/
 
 # 虚拟环境
 .venv/
+.venv-phase3/
+phase3-rollback/
 venv/
 env/
 

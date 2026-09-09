@@ -1567,58 +1567,16 @@ class MainWindow(QMainWindow):
         return panel, browser
 
     def _build_teaching_page(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(32, 24, 32, 24)
-        layout.setSpacing(12)
+        from src.gui.teaching_page import TeachingPage
 
-        header = QHBoxLayout()
-        title = QLabel("教学对话")
-        title.setObjectName("pageTitle")
-        header.addWidget(title)
-        badge = QLabel("Phase 3")
-        badge.setObjectName("badge")
-        header.addWidget(badge)
-        header.addStretch(1)
-        layout.addLayout(header)
+        def open_model_settings() -> None:
+            self._switch_page(3)
+            self.settings_page.categories.setCurrentRow(4)
 
-        empty = QWidget()
-        empty_layout = QVBoxLayout(empty)
-        empty_layout.addStretch(1)
-        empty_title = QLabel("课程助教尚未接入")
-        empty_title.setObjectName("noteTitle")
-        empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        empty_layout.addWidget(empty_title)
-        empty_hint = QLabel("教学对话与资料校验将在 Phase 3 启用")
-        empty_hint.setObjectName("muted")
-        empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        empty_layout.addWidget(empty_hint)
-        empty_layout.addStretch(1)
-        layout.addWidget(empty, 1)
-
-        composer = QFrame()
-        composer.setObjectName("composer")
-        composer_layout = QVBoxLayout(composer)
-        composer_layout.setContentsMargins(12, 10, 12, 10)
-        question = QPlainTextEdit()
-        question.setPlaceholderText("向课程助教提问...")
-        question.setMaximumHeight(80)
-        question.setEnabled(False)
-        composer_layout.addWidget(question)
-        actions = QHBoxLayout()
-        attach = QPushButton("上传附件")
-        attach.setIcon(self._standard_icon(QStyle.StandardPixmap.SP_DialogOpenButton))
-        attach.setEnabled(False)
-        attach.setToolTip("Phase 3 启用")
-        actions.addWidget(attach)
-        actions.addStretch(1)
-        send = QPushButton("发送")
-        send.setObjectName("primaryButton")
-        send.setEnabled(False)
-        actions.addWidget(send)
-        composer_layout.addLayout(actions)
-        layout.addWidget(composer)
-        return page
+        return TeachingPage(
+            lambda: self.settings, lambda: self.notes_root,
+            self.base_dir / "data" / "external", open_model_settings, self,
+        )
 
     def _switch_page(self, page_index: int) -> None:
         self.workspace.setCurrentIndex(page_index)
@@ -2177,6 +2135,7 @@ class MainWindow(QMainWindow):
                 code_font=str(self.settings["code_font"]),
             )
         self._highlight_query(self.search_preview, self.current_query)
+        self.teaching_page.refresh_settings()
         for line_edit in self.findChildren(ClearableLineEdit):
             line_edit.set_icon_theme(self.theme)
         self._populate_subject_tree()
@@ -2200,6 +2159,8 @@ class MainWindow(QMainWindow):
             return
         self.settings[key] = new_value
         self.settings_page.set_setting_value(key, new_value)
+        if key.startswith("teach_"):
+            self.teaching_page.refresh_settings()
 
         if key in {
             "theme",
@@ -2223,7 +2184,10 @@ class MainWindow(QMainWindow):
                 self._show_search_history(self.search_results)
 
     def _on_settings_action(self, action: str) -> None:
-        if action.startswith("reset_category:"):
+        if action == "test_teaching_connection":
+            self._switch_page(2)
+            self.teaching_page.check_connection()
+        elif action.startswith("reset_category:"):
             self._reset_settings_category(action.split(":", 1)[1])
         elif action == "choose_notes_root":
             self._choose_notes_root()
@@ -2498,6 +2462,11 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         """Wait for an active index worker before closing the window."""
+        if self.teaching_page.is_busy():
+            self.teaching_page.cancel()
+            self.statusBar().showMessage("正在取消教学请求并清理临时索引，请稍候再关闭")
+            event.ignore()
+            return
         if self._index_thread is not None and self._index_thread.isRunning():
             self._index_thread.quit()
             if not self._index_thread.wait(3000):

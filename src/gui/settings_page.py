@@ -5,6 +5,9 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+import os
+
+from src.teaching_config import TEACHING_DEFAULTS
 
 from PyQt6.QtCore import QPoint, Qt, pyqtSignal
 from PyQt6.QtGui import QFontDatabase
@@ -29,6 +32,7 @@ from PyQt6.QtWidgets import (
 
 
 CATEGORY_KEYS = {
+    "phase3": set(TEACHING_DEFAULTS),
     "appearance": {
         "theme",
         "ui_scale",
@@ -240,7 +244,7 @@ class SettingsPage(QWidget):
         heading.setObjectName("pageTitle")
         header.addWidget(heading)
         header.addStretch(1)
-        if category_id != "phase3":
+        if category_id in CATEGORY_KEYS:
             reset = QPushButton("恢复本页默认")
             reset.clicked.connect(
                 lambda _checked=False, key=category_id: self.action_requested.emit(
@@ -423,19 +427,39 @@ class SettingsPage(QWidget):
 
     def _build_phase3_page(self) -> QWidget:
         page, layout = self._page("教学与模型", "phase3")
-        badge = QLabel("Phase 3 · 即将推出")
-        badge.setObjectName("badge")
-        layout.addWidget(badge, 0, Qt.AlignmentFlag.AlignLeft)
-        for title, description in (
-            ("模型提供方", "Ollama 本地模型或 OpenAI 兼容 API。"),
-            ("模型与连接", "模型名称、服务地址、超时与连通性测试。"),
-            ("检索策略", "返回片段数、外部资料优先级与示例笔记引用策略。"),
-            ("上传策略", "允许的文件类型、大小上限与会话清理策略。"),
-            ("凭据管理", "API Key 仅使用系统凭据存储或环境变量。"),
+        self._row(layout, "模型提供方", "默认关闭。启用后仍需填写模型与服务地址。",
+                  self._combo("teach_provider", [("未启用", "disabled"),
+                              ("Ollama 本地模型", "local"), ("OpenAI 兼容 API", "api")]))
+        for key, title, description in (
+            ("teach_model", "模型名称", "填写服务中实际可用的模型名称，不自动下载模型。"),
+            ("teach_base_url", "服务地址", "Ollama：http://localhost:11434；OpenAI：https://api.openai.com/v1。禁止在地址中填写密钥。"),
+            ("teach_allowed_types", "允许上传类型", "英文逗号分隔，如 .pdf,.pptx,.docx,.txt；不支持图片 OCR。"),
         ):
-            unavailable = QLabel("暂不可用")
-            unavailable.setObjectName("muted")
-            self._row(layout, title, description, unavailable)
+            field = QLineEdit()
+            field.setMinimumWidth(240)
+            field.setAccessibleName(title)
+            field.editingFinished.connect(
+                lambda k=key, control=field: self._emit_change(k, control.text().strip()))
+            self._controls[key] = field
+            self._row(layout, title, description, field)
+        self._row(layout, "请求超时", "网络超时后不自动重试，避免重复计费。",
+                  self._spin("teach_timeout", 5, 300, " 秒"))
+        self._row(layout, "返回片段数", "笔记和外部资料各自最多召回的片段数；本地文本特征向量检索。",
+                  self._spin("teach_top_k", 1, 20, " 段"))
+        self._row(layout, "分块长度", "相邻分块保留少量重叠，避免切断上下文。",
+                  self._spin("teach_chunk_size", 100, 2000, " 字符"))
+        self._row(layout, "外部资料优先", "默认以外部资料为校验依据；关闭后并列展示双方观点。",
+                  self._check("teach_external_first"))
+        self._row(layout, "允许引用示例笔记", "默认不把示例内容用于课程校验。",
+                  self._check("teach_include_samples"))
+        self._row(layout, "单文件上限", "每次最多 20 个附件；源文件始终不移动或改写。",
+                  self._spin("teach_max_file_mb", 1, 100, " MB"))
+        self._row(layout, "会话与缓存", "教学记录仅在内存中；附件文本是否缓存由“隐私与数据 → 外部资料缓存”控制。", QLabel("默认不保留"))
+        self.key_status = QLabel()
+        self._row(layout, "API 凭据", "仅从 OPENAI_API_KEY 环境变量读取；不写入数据库、导出文件或 Git。", self.key_status)
+        test = QPushButton("测试连接")
+        test.clicked.connect(lambda: self.action_requested.emit("test_teaching_connection"))
+        self._row(layout, "连通性检查", "确认后只查询模型列表，不发送笔记或问题。", test)
         layout.addStretch(1)
         return page
 
@@ -468,6 +492,7 @@ class SettingsPage(QWidget):
         finally:
             self._updating = False
         self._update_editor_path_state()
+        self.key_status.setText("已配置环境变量" if os.getenv("OPENAI_API_KEY") else "未配置环境变量")
 
     def set_setting_value(self, key: str, value: Any) -> None:
         values = dict(self._settings)

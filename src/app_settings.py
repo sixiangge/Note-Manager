@@ -4,9 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
+
+from src.teaching_config import TEACHING_DEFAULTS
 
 
 DEFAULT_APP_SETTINGS: dict[str, Any] = {
+    **TEACHING_DEFAULTS,
     "theme": "light",
     "ui_scale": 100,
     "note_font_size": "standard",
@@ -32,6 +36,7 @@ DEFAULT_APP_SETTINGS: dict[str, Any] = {
 
 
 _CHOICES = {
+    "teach_provider": {"disabled", "local", "api"},
     "theme": {"light", "dark", "system"},
     "ui_scale": {90, 100, 110, 125},
     "note_font_size": {"small", "standard", "large"},
@@ -43,12 +48,16 @@ _CHOICES = {
     "external_cache_policy": {"discard", "keep"},
 }
 _BOOL_KEYS = {
+    "teach_external_first",
+    "teach_include_samples",
     "restore_reading_state",
     "auto_generate_samples",
     "show_sample_notes",
     "history_enabled",
 }
 _STRING_KEYS = {
+    "teach_model",
+    "teach_allowed_types",
     "body_font",
     "code_font",
     "notes_root",
@@ -77,6 +86,20 @@ def normalized_settings(
             settings[key] = values[key]
 
     history_limit = values.get("history_limit")
+    for key, lower, upper in (("teach_timeout", 5, 300), ("teach_top_k", 1, 20),
+                              ("teach_chunk_size", 100, 2000), ("teach_max_file_mb", 1, 100)):
+        value = values.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            settings[key] = max(lower, min(upper, value))
+    base_url = values.get("teach_base_url")
+    if isinstance(base_url, str):
+        try:
+            url = urlsplit(base_url.strip())
+            if (url.scheme in {"http", "https"} and url.hostname and not
+                    (url.username or url.password or url.query or url.fragment)):
+                settings["teach_base_url"] = base_url.strip().rstrip("/")
+        except ValueError:
+            pass
     if isinstance(history_limit, int) and not isinstance(history_limit, bool):
         settings["history_limit"] = max(1, min(history_limit, 100))
     last_scroll = values.get("last_note_scroll")
