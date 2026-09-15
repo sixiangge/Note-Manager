@@ -20,6 +20,10 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+.pyinstaller-build*/
+.pyinstaller-spec/
+packaged-release*/
+*.spec
 
 # 虚拟环境
 .venv/

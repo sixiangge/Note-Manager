@@ -14,8 +14,12 @@ import sqlite3
 import sys
 from pathlib import Path
 
-# 项目根目录（本文件所在目录），所有数据路径均以此为基准
-BASE_DIR = Path(__file__).resolve().parent
+# 项目根目录。打包后以 PyInstaller 的运行目录为基准，确保随包资源可被定位。
+BASE_DIR = (
+    Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+    if getattr(sys, "frozen", False)
+    else Path(__file__).resolve().parent
+)
 NOTES_ROOT = BASE_DIR / "data" / "notes"
 EXTERNAL_DIR = BASE_DIR / "data" / "external"
 INDEX_PATH = BASE_DIR / "data" / "index" / "index.json"

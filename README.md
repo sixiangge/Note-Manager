@@ -23,6 +23,16 @@
 
 > ✅ 已实现。Phase 3 需要额外安装可选依赖并配置模型，默认关闭；不影响离线浏览和关键词搜索。
 
+## 打包 Windows 应用
+
+在 PowerShell 中运行以下命令可生成带图标的 GUI 发行版：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build_exe.ps1 -InstallBuildDependencies
+```
+
+生成的程序位于 `dist\NoteManager\NoteManager.exe`。请保留整个 `NoteManager` 文件夹，不能只移动其中的 `.exe`。
+
 ## 快速开始
 
 ```bash
