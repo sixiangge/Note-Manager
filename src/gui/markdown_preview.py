@@ -33,6 +33,10 @@ _FRAC_COMMAND_RE = re.compile(r"\\frac(?![A-Za-z])")
 _MATH_COMMAND_RE = re.compile(r"\\(?:[A-Za-z]+|.)")
 _BARE_BR_RE = re.compile(r"<br\s*>", re.IGNORECASE)
 _BARE_IMG_RE = re.compile(r"<img\b([^<>]*?)(?<!/)>", re.IGNORECASE)
+_FORMULA_ONLY_LIST_ITEM_RE = re.compile(
+    r"(?m)^[ \t]*(?:[-+*]|\d+[.)])[ \t]+"
+    r"(?:!\[math-inline\]\(formula://math-\d+\)[ \t]*)+$"
+)
 _CJK_TEXT_COMMAND_RE = re.compile(
     r"\\(?:text|textrm|textsf|mathrm|mathbf|mathit|operatorname)\s*"
     r"\{([^{}]*[\u3400-\u9fff][^{}]*)\}"
@@ -323,7 +327,16 @@ def _replace_math(
             continue
         prose.append(line)
     flush_prose()
-    return "".join(output), images
+    processed = "".join(output)
+    # Qt 6.11 progressively indents sibling list items whose only content is
+    # an image. A zero-width no-break space keeps them text-bearing and is
+    # discarded by QTextDocument, so neither the source nor visible output
+    # changes.
+    processed = _FORMULA_ONLY_LIST_ITEM_RE.sub(
+        lambda match: match.group(0) + "\ufeff",
+        processed,
+    )
+    return processed, images
 
 
 def _box_code_blocks(

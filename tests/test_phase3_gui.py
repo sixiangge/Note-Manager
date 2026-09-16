@@ -11,12 +11,13 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 HAS_GUI = find_spec("PyQt6") is not None
 if HAS_GUI:
-    from PyQt6.QtWidgets import QApplication, QMessageBox
+    from PyQt6.QtWidgets import QApplication, QCheckBox, QLabel, QMessageBox, QLineEdit
     from PyQt6.QtCore import QUrl, Qt, QMimeData, QPointF
     from PyQt6.QtGui import QCloseEvent, QDropEvent, QFontDatabase, QFont
     from PyQt6.QtTest import QTest
     from src.gui.teaching_page import TeachingPage
     from src.gui.main_window import MainWindow
+    from src.gui.settings_page import SettingsPage
 
 from src.app_settings import normalized_settings
 from src.models import TeachSession
@@ -75,6 +76,33 @@ class TestTeachingGui(unittest.TestCase):
         self.page.add_files([str(path), str(path), str(self.root / "missing.pdf")])
         self.assertEqual(self.page.attachments.count(), 1)
         self.assertIn("missing.pdf", self.page.status.text())
+
+    def test_system_proxy_can_be_enabled_from_model_settings(self):
+        settings = normalized_settings({}, self.root)
+        page = SettingsPage(settings)
+        page.show()
+        try:
+            page.categories.setCurrentRow(4)
+            self.app.processEvents()
+            title = next(
+                label
+                for label in page.findChildren(QLabel)
+                if label.text() == "使用系统代理"
+            )
+            checkbox = title.parentWidget().findChild(QCheckBox)
+            self.assertIsNotNone(checkbox)
+            self.assertFalse(checkbox.isChecked())
+
+            changes = []
+            page.setting_changed.connect(
+                lambda key, value: changes.append((key, value))
+            )
+            QTest.mouseClick(checkbox, Qt.MouseButton.LeftButton)
+            self.assertEqual(changes, [("teach_use_system_proxy", True)])
+        finally:
+            page.close()
+            page.deleteLater()
+            self.app.processEvents()
 
     def test_send_render_history_sources_and_clear(self):
         source = {"id": "N1", "content": "极限原文", "path": "note.md",
@@ -192,6 +220,24 @@ class TestTeachingGui(unittest.TestCase):
             self.assertIn("teach_model", window.settings_page._controls)
             if os.getenv("NOTEMANAGER_TEST_SCREENSHOTS"):
                 window.grab().save(str(Path(os.environ["NOTEMANAGER_TEST_SCREENSHOTS"]) / "model-settings.png"))
+        finally:
+            window.close()
+            window.deleteLater()
+            self.app.processEvents()
+
+    def test_api_key_input_is_masked_saved_outside_settings_and_cleared(self):
+        window = MainWindow(self.root, self.root / "notes", self.root / "index" / "index.json",
+                            preloaded_settings=self.settings,
+                            preloaded_index={"documents": {}, "inverted_index": {}}, preloaded_history=[])
+        try:
+            field = window.settings_page.api_key_input
+            self.assertEqual(field.echoMode(), QLineEdit.EchoMode.Password)
+            field.setText("gui-test-secret")
+            with patch("src.gui.main_window.save_api_key") as save:
+                window._on_settings_action("save_api_key")
+            save.assert_called_once_with("gui-test-secret")
+            self.assertEqual(field.text(), "")
+            self.assertNotIn("gui-test-secret", repr(window.settings))
         finally:
             window.close()
             window.deleteLater()

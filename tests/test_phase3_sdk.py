@@ -5,6 +5,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.util import find_spec
 import json
 import io
+import os
 from contextlib import redirect_stdout
 from pathlib import Path
 import tempfile
@@ -37,7 +38,7 @@ class TestSdkIntegration(unittest.TestCase):
                 self.wfile.write(body)
 
             def do_GET(self):
-                owner.requests.append(("GET", self.path, None))
+                owner.requests.append(("GET", self.path, None, self.headers.get("User-Agent")))
                 if self.path == "/api/tags":
                     self.respond({"models": [{"model": "fake:latest", "name": "fake:latest"}]})
                 else:
@@ -45,7 +46,7 @@ class TestSdkIntegration(unittest.TestCase):
 
             def do_POST(self):
                 payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-                owner.requests.append(("POST", self.path, payload))
+                owner.requests.append(("POST", self.path, payload, self.headers.get("User-Agent")))
                 if owner.status != 200:
                     self.respond({"error": {"message": "SENSITIVE_TEST_SECRET", "type": "invalid_api_key"}})
                 elif self.path == "/api/chat":
@@ -79,6 +80,27 @@ class TestSdkIntegration(unittest.TestCase):
             self.assertEqual(self.requests[-1][2]["messages"], messages)
         self.assertEqual([r[0] for r in self.requests], ["GET", "POST", "GET", "POST"])
         self.assertEqual([r[1] for r in self.requests], ["/api/tags", "/api/chat", "/v1/models", "/v1/chat/completions"])
+        self.assertEqual([r[3] for r in self.requests[2:]], ["NoteManager/1.0", "NoteManager/1.0"])
+
+    def test_remote_api_uses_system_proxy_only_when_enabled(self):
+        config = TeachingConfig(
+            provider="api",
+            model="fake",
+            base_url=self.url + "/v1",
+        )
+        unavailable_proxy = "http://127.0.0.1:1"
+        with patch.dict(
+            os.environ,
+            {
+                "HTTP_PROXY": unavailable_proxy,
+                "HTTPS_PROXY": unavailable_proxy,
+                "ALL_PROXY": unavailable_proxy,
+                "NO_PROXY": "",
+            },
+        ):
+            self.assertIn("连接成功", probe_connection(config))
+            with self.assertRaises(RuntimeError):
+                probe_connection(replace(config, use_system_proxy=True))
 
     def test_errors_are_redacted_not_retried(self):
         self.status = 401
@@ -88,6 +110,16 @@ class TestSdkIntegration(unittest.TestCase):
         self.assertNotIn("SENSITIVE_TEST_SECRET", str(raised.exception))
         self.assertNotIn("dummy-test-key", str(raised.exception))
         self.assertEqual(len(self.requests), 1)
+
+    def test_html_api_response_explains_the_expected_v1_endpoint(self):
+        config = TeachingConfig(provider="api", model="fake", base_url=self.url)
+        with patch(
+            "openai.resources.chat.completions.Completions.create",
+            return_value="<!doctype html><title>service page</title>",
+        ):
+            with self.assertRaisesRegex(RuntimeError, "OpenAI 兼容") as raised:
+                generate(config, [{"role": "user", "content": "fixture"}])
+        self.assertIn("/v1", str(raised.exception))
 
     def test_invalid_json_is_actionable_failure(self):
         self.output = "not JSON"

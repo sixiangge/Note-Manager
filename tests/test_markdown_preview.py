@@ -54,6 +54,28 @@ class TestMarkdownPreview(unittest.TestCase):
         self.assertEqual(len(images), 2)
         self.assertTrue(all(not image.isNull() for image in images.values()))
 
+    def test_formula_only_list_items_keep_the_same_visual_indent(self):
+        preview = MarkdownPreview()
+        preview.resize(750, 500)
+        preview.set_markdown(
+            "- **长度**\n"
+            "  - $∣w∣=n$\n"
+            "  - $∣uv∣=∣u∣+∣v∣$\n"
+        )
+        document = preview.document()
+        document.setTextWidth(700)
+        document.documentLayout()
+
+        positions = []
+        block = document.begin()
+        while block.isValid():
+            if block.textList() is not None:
+                positions.append(block.layout().lineAt(0).x())
+            block = block.next()
+
+        self.assertEqual(len(positions), 3)
+        self.assertEqual(positions[1], positions[2])
+
     def test_bare_br_in_table_does_not_swallow_following_content(self):
         markdown = (
             "| 列一 | 列二 |\n"

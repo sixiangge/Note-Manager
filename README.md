@@ -32,6 +32,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build_exe.ps1 -InstallBuildDe
 ```
 
 生成的程序位于 `dist\NoteManager\NoteManager.exe`。请保留整个 `NoteManager` 文件夹，不能只移动其中的 `.exe`。
+若要让发行版包含完整 Phase 3 依赖，可通过 `-PythonExecutable .\.venv-phase3\Scripts\python.exe` 指定已安装 `requirements-phase3.txt` 的环境。
 
 ## 快速开始
 
@@ -94,7 +95,7 @@ python -m pip install -r requirements-phase3.txt
 python main.py teach "解释极限的定义" --model local --model-name MODEL_NAME --files "课件.pdf"
 ```
 
-GUI 在“设置 → 教学与模型”中选择提供方、模型名与地址，可先测试连接。OpenAI 兼容 API 的密钥只从 `OPENAI_API_KEY` 环境变量读取。远程调用前会确认发送范围；本地模型连接绕过系统代理。仅发送召回的文本片段和最近对话，不发送完整附件或本地绝对路径。
+GUI 在“设置 → 教学与模型”中选择提供方、模型名与地址，可直接填写 API Key 并测试连接。密钥由当前 Windows 账户的凭据管理器加密保存，不进入 SQLite、导出文件、日志或 Git；`OPENAI_API_KEY` 环境变量仍可作为后备。远程调用前会确认发送范围；本地模型连接绕过系统代理。仅发送召回的文本片段和最近对话，不发送完整附件或本地绝对路径。
 
 完整用法、能力限制、测试与本次快速回退方法见 [PHASE3.md](PHASE3.md)。检索使用本地文本特征向量 + ChromaDB，不是神经语义嵌入；不自动下载嵌入模型，不支持图片/扫描件 OCR。
 

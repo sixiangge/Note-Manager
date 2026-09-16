@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-import os
 
+from src.api_credentials import CredentialStorageError, api_key_source
 from src.teaching_config import TEACHING_DEFAULTS
 
 from PyQt6.QtCore import QPoint, Qt, pyqtSignal
@@ -442,6 +442,12 @@ class SettingsPage(QWidget):
                 lambda k=key, control=field: self._emit_change(k, control.text().strip()))
             self._controls[key] = field
             self._row(layout, title, description, field)
+        self._row(
+            layout,
+            "使用系统代理",
+            "默认关闭并直接连接；仅在系统代理的网络与证书配置正确时开启。",
+            self._check("teach_use_system_proxy"),
+        )
         self._row(layout, "请求超时", "网络超时后不自动重试，避免重复计费。",
                   self._spin("teach_timeout", 5, 300, " 秒"))
         self._row(layout, "返回片段数", "笔记和外部资料各自最多召回的片段数；本地文本特征向量检索。",
@@ -455,8 +461,55 @@ class SettingsPage(QWidget):
         self._row(layout, "单文件上限", "每次最多 20 个附件；源文件始终不移动或改写。",
                   self._spin("teach_max_file_mb", 1, 100, " MB"))
         self._row(layout, "会话与缓存", "教学记录仅在内存中；附件文本是否缓存由“隐私与数据 → 外部资料缓存”控制。", QLabel("默认不保留"))
+        credential_box = QWidget()
+        credential_layout = QVBoxLayout(credential_box)
+        credential_layout.setContentsMargins(0, 0, 0, 0)
+        credential_layout.setSpacing(7)
+
+        credential_row = QHBoxLayout()
+        credential_row.setContentsMargins(0, 0, 0, 0)
+        credential_row.setSpacing(7)
+        self.api_key_input = QLineEdit()
+        self.api_key_input.setMinimumWidth(260)
+        self.api_key_input.setMaxLength(2048)
+        self.api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.api_key_input.setPlaceholderText("输入 API Key")
+        self.api_key_input.setAccessibleName("API Key")
+        self.api_key_input.setInputMethodHints(
+            Qt.InputMethodHint.ImhHiddenText
+            | Qt.InputMethodHint.ImhSensitiveData
+            | Qt.InputMethodHint.ImhNoPredictiveText
+        )
+        self.api_key_input.returnPressed.connect(
+            lambda: self.action_requested.emit("save_api_key")
+        )
+        credential_row.addWidget(self.api_key_input, 1)
+
+        self.api_key_visibility = QToolButton()
+        self.api_key_visibility.setText("显示")
+        self.api_key_visibility.setCheckable(True)
+        self.api_key_visibility.setAccessibleName("显示或隐藏 API Key")
+        self.api_key_visibility.toggled.connect(self._toggle_api_key_visibility)
+        credential_row.addWidget(self.api_key_visibility)
+
+        save_key = QPushButton("保存")
+        save_key.setObjectName("primaryButton")
+        save_key.clicked.connect(lambda: self.action_requested.emit("save_api_key"))
+        credential_row.addWidget(save_key)
+        clear_key = QPushButton("清除")
+        clear_key.clicked.connect(lambda: self.action_requested.emit("clear_api_key"))
+        credential_row.addWidget(clear_key)
+        credential_layout.addLayout(credential_row)
+
         self.key_status = QLabel()
-        self._row(layout, "API 凭据", "仅从 OPENAI_API_KEY 环境变量读取；不写入数据库、导出文件或 Git。", self.key_status)
+        self.key_status.setObjectName("muted")
+        credential_layout.addWidget(self.key_status)
+        self._row(
+            layout,
+            "API 凭据",
+            "保存在当前 Windows 账户的凭据管理器中；输入默认隐藏，不写入数据库、导出文件、日志或 Git。",
+            credential_box,
+        )
         test = QPushButton("测试连接")
         test.clicked.connect(lambda: self.action_requested.emit("test_teaching_connection"))
         self._row(layout, "连通性检查", "确认后只查询模型列表，不发送笔记或问题。", test)
@@ -492,12 +545,42 @@ class SettingsPage(QWidget):
         finally:
             self._updating = False
         self._update_editor_path_state()
-        self.key_status.setText("已配置环境变量" if os.getenv("OPENAI_API_KEY") else "未配置环境变量")
+        self.refresh_api_key_status()
 
     def set_setting_value(self, key: str, value: Any) -> None:
         values = dict(self._settings)
         values[key] = value
         self.set_values(values)
+
+    def api_key_text(self) -> str:
+        """Return the pending secret without adding it to ordinary settings."""
+        return self.api_key_input.text().strip()
+
+    def clear_api_key_input(self) -> None:
+        """Remove secret text from the widget as soon as it has been handled."""
+        self.api_key_input.clear()
+        self.api_key_visibility.setChecked(False)
+
+    def _toggle_api_key_visibility(self, visible: bool) -> None:
+        self.api_key_input.setEchoMode(
+            QLineEdit.EchoMode.Normal if visible else QLineEdit.EchoMode.Password
+        )
+        self.api_key_visibility.setText("隐藏" if visible else "显示")
+
+    def refresh_api_key_status(self) -> None:
+        """Show only the credential source, never any part of the key."""
+        try:
+            source = api_key_source()
+        except CredentialStorageError as exc:
+            self.key_status.setText(str(exc))
+            return
+        self.key_status.setText(
+            {
+                "windows": "已安全保存到 Windows 凭据管理器",
+                "environment": "已由 OPENAI_API_KEY 环境变量配置",
+                "missing": "尚未配置",
+            }[source]
+        )
 
     def _update_editor_path_state(self) -> None:
         path = self._controls.get("external_editor_path")

@@ -29,7 +29,7 @@ python main.py gui
 
 ### OpenAI 兼容 API
 
-设置中选择 API，填写服务提供方的模型名和兼容地址，例如 OpenAI 的 `https://api.openai.com/v1`。需要支持 Chat Completions 与 JSON object 输出。密钥仅通过启动进程的 `OPENAI_API_KEY` 环境变量提供，设置页不接收密钥；不要在 URL、模型名、笔记或代码中填写密钥。修改环境变量后需重新启动 GUI。
+设置中选择 API，填写服务提供方的模型名、兼容地址和 API Key，例如 OpenAI 的 `https://api.openai.com/v1`。需要支持 Chat Completions 与 JSON object 输出。GUI 中填写的密钥由当前 Windows 账户的凭据管理器加密保存，直到用户修改或清除；不会写入 SQLite、设置导出、日志或 Git。`OPENAI_API_KEY` 环境变量仍作为未保存 GUI 密钥时的兼容后备。不要在 URL、模型名、笔记或代码中填写密钥。
 
 GUI 每次远程请求都会确认目的地址和发送范围；CLI 显式选择 API 即表示授权该次请求，可能产生费用。兼容服务的模型列表或 JSON 支持可能不同，失败时会提示，不自动重试。连接本机模型时绕过系统代理，非本机地址必须 HTTPS，不跟随 HTTP 重定向。
 

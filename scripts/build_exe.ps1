@@ -12,6 +12,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build_exe.ps1 -OutputDir C:\R
 [CmdletBinding()]
 param(
     [string]$OutputDir = "",
+    [string]$PythonExecutable = "python",
     [switch]$InstallBuildDependencies
 )
 
@@ -27,23 +28,23 @@ $iconPath = Join-Path $projectRoot "src\gui\assets\notemanager.ico"
 $assetPath = Join-Path $projectRoot "src\gui\assets"
 $dataPath = Join-Path $projectRoot "data"
 
-if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+if (-not (Get-Command $PythonExecutable -ErrorAction SilentlyContinue)) {
     throw "Python was not found. Install Python 3.10+ and add it to PATH."
 }
 
 if ($InstallBuildDependencies) {
-    & python -m pip install -r (Join-Path $projectRoot "requirements.txt") PyInstaller
+    & $PythonExecutable -m pip install -r (Join-Path $projectRoot "requirements.txt") PyInstaller
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to install build dependencies."
     }
 }
 
-& python -c "import PyInstaller, frontmatter, jieba, PyQt6"
+& $PythonExecutable -c "import PyInstaller, frontmatter, jieba, PyQt6, win32cred, win32timezone, chromadb.api.rust, chromadb_rust_bindings"
 if ($LASTEXITCODE -ne 0) {
     throw "Missing build dependencies. Run this script again with -InstallBuildDependencies."
 }
 
-& python -m PyInstaller `
+& $PythonExecutable -m PyInstaller `
     --noconfirm `
     --clean `
     --windowed `
@@ -52,6 +53,12 @@ if ($LASTEXITCODE -ne 0) {
     --add-data "$assetPath;src\gui\assets" `
     --add-data "$dataPath;data" `
     --collect-submodules src `
+    --collect-data chromadb `
+    --hidden-import chromadb.api.rust `
+    --hidden-import chromadb.telemetry.product.posthog `
+    --hidden-import chromadb_rust_bindings `
+    --hidden-import win32cred `
+    --hidden-import win32timezone `
     --distpath $OutputDir `
     --workpath (Join-Path $buildRoot "work") `
     --specpath (Join-Path $buildRoot "spec") `

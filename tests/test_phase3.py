@@ -3,12 +3,19 @@
 from dataclasses import replace
 from importlib.util import find_spec
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
 import zipfile
 
+from src.api_credentials import (
+    api_key_source,
+    delete_saved_api_key,
+    get_api_key,
+    save_api_key,
+)
 from src.app_settings import normalized_settings
 from src.models import ExternalDocument, Note
 from src.oracle import _analyze_discrepancies, _build_teach_prompt, teach_session, TeachingCancelled
@@ -35,13 +42,31 @@ class TemporaryCase(unittest.TestCase):
 
 
 class TestTeachingSettings(TemporaryCase):
+    def test_system_proxy_is_opt_in_and_persists(self):
+        from src.storage import load_app_settings, save_app_settings
+
+        defaults = normalized_settings({}, self.root)
+        self.assertFalse(defaults["teach_use_system_proxy"])
+        self.assertFalse(TeachingConfig.from_settings(defaults).use_system_proxy)
+
+        enabled = normalized_settings(
+            {"teach_use_system_proxy": True},
+            self.root,
+        )
+        database = self.root / "state.db"
+        save_app_settings(database, enabled)
+        restored = normalized_settings(load_app_settings(database), self.root)
+        self.assertTrue(restored["teach_use_system_proxy"])
+        self.assertTrue(TeachingConfig.from_settings(restored).use_system_proxy)
+
     def test_defaults_disabled_and_no_credentials(self):
         settings = normalized_settings({"OPENAI_API_KEY": "fake", "teach_api_key": "fake",
                                         "teach_base_url": "https://user:secret@example.org"}, self.root)
         self.assertEqual(settings["teach_provider"], "disabled")
         self.assertNotIn("fake", json.dumps(settings))
         self.assertNotIn("secret", settings["teach_base_url"])
-        with self.assertRaises(ValueError):
+        with patch("src.teaching_config.get_api_key", return_value=None), \
+                self.assertRaises(ValueError):
             TeachingConfig.from_settings(settings).validate()
 
     def test_config_bounds_and_urls(self):
@@ -52,7 +77,8 @@ class TestTeachingSettings(TemporaryCase):
                         {"allowed_types": ".exe"}, {"model": ""}):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 replace(valid, **changes).validate()
-        with patch.dict("os.environ", {}, clear=True), self.assertRaises(ValueError):
+        with patch("src.teaching_config.get_api_key", return_value=None), \
+                self.assertRaises(ValueError):
             replace(valid, provider="api").validate()
 
     def test_settings_roundtrip_non_secret(self):
@@ -64,6 +90,68 @@ class TestTeachingSettings(TemporaryCase):
         restored = normalized_settings(load_app_settings(database), self.root)
         self.assertEqual(restored, settings)
         self.assertEqual(restored["teach_timeout"], 300)
+
+
+class _FakeCredentialError(Exception):
+    def __init__(self, code: int):
+        super().__init__(code, "credential error")
+        self.winerror = code
+
+
+class _FakeCredentialBackend:
+    CRED_TYPE_GENERIC = 1
+    CRED_PERSIST_LOCAL_MACHINE = 2
+
+    def __init__(self):
+        self.credentials = {}
+
+    def CredRead(self, target, credential_type, flags):
+        if target not in self.credentials:
+            raise _FakeCredentialError(1168)
+        return dict(self.credentials[target])
+
+    def CredWrite(self, credential, flags):
+        self.credentials[credential["TargetName"]] = dict(credential)
+
+    def CredDelete(self, target, credential_type, flags):
+        if target not in self.credentials:
+            raise _FakeCredentialError(1168)
+        del self.credentials[target]
+
+
+class TestApiCredentials(unittest.TestCase):
+    def test_packaging_includes_dynamic_phase3_and_credential_dependencies(self):
+        build_script = (
+            Path(__file__).resolve().parents[1] / "scripts" / "build_exe.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertIn("--hidden-import win32cred", build_script)
+        self.assertIn("--hidden-import win32timezone", build_script)
+        self.assertIn("--collect-data chromadb", build_script)
+        self.assertIn("--hidden-import chromadb.api.rust", build_script)
+        self.assertIn("--hidden-import chromadb.telemetry.product.posthog", build_script)
+        self.assertIn("--hidden-import chromadb_rust_bindings", build_script)
+
+    def test_key_persists_in_credential_backend_and_can_be_replaced_or_deleted(self):
+        backend = _FakeCredentialBackend()
+        with patch("src.api_credentials._win32cred", return_value=backend), \
+                patch.dict(os.environ, {}, clear=True):
+            self.assertIsNone(get_api_key())
+            save_api_key("first-test-key")
+            self.assertEqual(get_api_key(), "first-test-key")
+            self.assertEqual(api_key_source(), "windows")
+            save_api_key("replacement-test-key")
+            self.assertEqual(get_api_key(), "replacement-test-key")
+            self.assertTrue(delete_saved_api_key())
+            self.assertIsNone(get_api_key())
+
+    def test_environment_remains_a_fallback_without_persisting_in_settings(self):
+        backend = _FakeCredentialBackend()
+        with patch("src.api_credentials._win32cred", return_value=backend), \
+                patch.dict(os.environ, {"OPENAI_API_KEY": "environment-test-key"}, clear=True):
+            self.assertEqual(get_api_key(), "environment-test-key")
+            self.assertEqual(api_key_source(), "environment")
+            save_api_key("saved-test-key")
+            self.assertEqual(get_api_key(), "environment-test-key")
 
 
 class TestExternalText(TemporaryCase):

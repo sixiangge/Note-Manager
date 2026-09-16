@@ -75,6 +75,11 @@ from PyQt6.QtWidgets import (
 )
 
 from src.indexer import build_index, generate_sample_notes, load_index, save_index
+from src.api_credentials import (
+    CredentialStorageError,
+    delete_saved_api_key,
+    save_api_key,
+)
 from src.app_settings import DEFAULT_APP_SETTINGS, normalized_settings
 from src.gui.markdown_preview import MarkdownPreview
 from src.gui.settings_page import SettingsPage
@@ -2184,7 +2189,11 @@ class MainWindow(QMainWindow):
                 self._show_search_history(self.search_results)
 
     def _on_settings_action(self, action: str) -> None:
-        if action == "test_teaching_connection":
+        if action == "save_api_key":
+            self._save_api_key()
+        elif action == "clear_api_key":
+            self._clear_api_key()
+        elif action == "test_teaching_connection":
             self._switch_page(2)
             self.teaching_page.check_connection()
         elif action.startswith("reset_category:"):
@@ -2211,6 +2220,42 @@ class MainWindow(QMainWindow):
             self._reset_all_settings()
         elif action == "export_local_data":
             self._export_local_data()
+
+    def _save_api_key(self) -> None:
+        key = self.settings_page.api_key_text()
+        if not key:
+            QMessageBox.warning(self, "API Key 未填写", "请输入 API Key 后再保存。")
+            return
+        try:
+            save_api_key(key)
+        except (ValueError, CredentialStorageError) as exc:
+            QMessageBox.warning(self, "API Key 保存失败", str(exc))
+            return
+        self.settings_page.clear_api_key_input()
+        self.settings_page.refresh_api_key_status()
+        self.teaching_page.refresh_settings()
+        self.statusBar().showMessage("API Key 已安全保存到 Windows 凭据管理器", 5000)
+
+    def _clear_api_key(self) -> None:
+        answer = QMessageBox.question(
+            self,
+            "清除 API Key",
+            "将删除 NoteManager 保存在 Windows 凭据管理器中的 API Key。"
+            "系统环境变量 OPENAI_API_KEY 不受影响。继续吗？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            delete_saved_api_key()
+        except CredentialStorageError as exc:
+            QMessageBox.warning(self, "API Key 清除失败", str(exc))
+            return
+        self.settings_page.clear_api_key_input()
+        self.settings_page.refresh_api_key_status()
+        self.teaching_page.refresh_settings()
+        self.statusBar().showMessage("已清除 NoteManager 保存的 API Key", 5000)
 
     def _default_value(self, key: str) -> Any:
         if key == "notes_root":

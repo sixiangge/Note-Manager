@@ -1,8 +1,9 @@
 """Non-secret settings for the optional teaching engine."""
 
 from dataclasses import dataclass
-import os
 from urllib.parse import urlsplit
+
+from src.api_credentials import CredentialStorageError, get_api_key
 
 
 TEACHING_DEFAULTS = {
@@ -14,6 +15,7 @@ TEACHING_DEFAULTS = {
     "teach_chunk_size": 500,
     "teach_external_first": True,
     "teach_include_samples": False,
+    "teach_use_system_proxy": False,
     "teach_max_file_mb": 20,
     "teach_allowed_types": ".pdf,.pptx,.docx,.txt",
 }
@@ -31,6 +33,7 @@ class TeachingConfig:
     chunk_size: int = 500
     external_first: bool = True
     include_samples: bool = False
+    use_system_proxy: bool = False
     max_file_mb: int = 20
     allowed_types: str = ".pdf,.pptx,.docx,.txt"
 
@@ -60,5 +63,10 @@ class TeachingConfig:
         suffixes = set(self.allowed_types.lower().replace(" ", "").split(","))
         if not suffixes or not suffixes <= {".pdf", ".pptx", ".docx", ".txt"}:
             raise ValueError("允许类型仅支持 .pdf,.pptx,.docx,.txt，以逗号分隔。")
-        if self.provider == "api" and not os.environ.get("OPENAI_API_KEY"):
-            raise ValueError("未配置环境变量 OPENAI_API_KEY；密钥不会写入应用数据库。")
+        if self.provider == "api":
+            try:
+                configured = bool(get_api_key())
+            except CredentialStorageError as exc:
+                raise ValueError(str(exc)) from exc
+            if not configured:
+                raise ValueError("请在设置 → 教学与模型中填写 API Key。")

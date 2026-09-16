@@ -50,6 +50,7 @@ _CHOICES = {
 _BOOL_KEYS = {
     "teach_external_first",
     "teach_include_samples",
+    "teach_use_system_proxy",
     "restore_reading_state",
     "auto_generate_samples",
     "show_sample_notes",
