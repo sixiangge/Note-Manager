@@ -5,13 +5,14 @@ from __future__ import annotations
 import os
 import re
 import tempfile
+from math import ceil
 from hashlib import sha256
 from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import QByteArray, QStandardPaths, Qt, QUrl
+from PyQt6.QtCore import QByteArray, QEvent, QStandardPaths, Qt, QTimer, QUrl
 from PyQt6.QtGui import QColor, QImage, QPainter, QTextDocument, QTextTable
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PyQt6.QtWidgets import QTextBrowser
@@ -201,7 +202,9 @@ def _normalize_cases(match: re.Match[str]) -> str:
     return r"\left\{\substack{" + body + r"}\right."
 
 
-def _render_cjk_formula(expression: str, font_size: int, color: str) -> QImage:
+def _render_cjk_formula(
+    expression: str, font_size: int, color: str, pixel_ratio: float
+) -> QImage:
     from matplotlib.font_manager import FontProperties
     from matplotlib.mathtext import math_to_image
 
@@ -210,14 +213,14 @@ def _render_cjk_formula(expression: str, font_size: int, color: str) -> QImage:
         _mixed_cjk_math(_normalize_math_expression(expression.strip())),
         output,
         prop=FontProperties(family="Microsoft YaHei", size=font_size),
-        dpi=144,
+        dpi=72 * pixel_ratio,
         format="png",
         color=color,
     )
     image = QImage.fromData(output.getvalue(), "PNG")
     if image.isNull():
         raise ValueError("公式图像生成失败")
-    image.setDevicePixelRatio(2.0)
+    image.setDevicePixelRatio(pixel_ratio)
     return image
 
 
@@ -227,18 +230,19 @@ def _render_formula(
     display: bool,
     color: str,
     size_offset: int,
+    pixel_ratio: float = 4.0,
 ) -> QImage:
     font_size = (15 if display else 14) + size_offset
     expression = _normalize_math_expression(expression)
     if _CJK_TEXT_RE.search(expression):
-        return _render_cjk_formula(expression, font_size, color)
+        return _render_cjk_formula(expression, font_size, color, pixel_ratio)
 
     import numpy as np
 
     parser, font_properties = _math_parser()
     parsed = parser.parse(
         f"${expression.strip()}$",
-        dpi=144,
+        dpi=72 * pixel_ratio,
         prop=font_properties(size=font_size),
     )
     alpha = np.asarray(parsed.image, dtype=np.uint8)
@@ -256,7 +260,7 @@ def _render_formula(
         int(rgba.strides[0]),
         QImage.Format.Format_RGBA8888,
     ).copy()
-    image.setDevicePixelRatio(2.0)
+    image.setDevicePixelRatio(pixel_ratio)
     return image
 
 
@@ -264,6 +268,7 @@ def _replace_math(
     markdown: str,
     color: str,
     size_offset: int,
+    pixel_ratio: float = 4.0,
 ) -> tuple[str, dict[str, QImage]]:
     images: dict[str, QImage] = {}
     formula_number = 0
@@ -271,7 +276,9 @@ def _replace_math(
     def formula_placeholder(expression: str, display: bool, original: str) -> str:
         nonlocal formula_number
         try:
-            image = _render_formula(expression, display, color, size_offset)
+            image = _render_formula(
+                expression, display, color, size_offset, pixel_ratio
+            )
         except (ImportError, OSError, RuntimeError, ValueError):
             return original
         key = f"math-{formula_number}"
@@ -433,12 +440,39 @@ class MarkdownPreview(QTextBrowser):
         self._code_font = "system"
         self._network_manager = QNetworkAccessManager(self)
         self._image_cache: dict[str, QImage] = {}
-        self._scaled_image_cache: dict[tuple[str, int], QImage] = {}
+        self._scaled_image_cache: dict[tuple[str, int, float], QImage] = {}
         self._image_cache_dir = image_cache_dir or _default_image_cache_dir()
         self._pending_images: dict[str, QNetworkReply] = {}
         self._failed_images: set[str] = set()
         self._loading_image = self._make_image_notice("正在加载图片…")
         self._failed_image = self._make_image_notice("图片加载失败")
+        self._render_metrics: tuple[int, float] | None = None
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setSingleShot(True)
+        self._refresh_timer.setInterval(120)
+        self._refresh_timer.timeout.connect(self._refresh_resolution)
+
+    def _display_metrics(self) -> tuple[int, float]:
+        return max(64, self.viewport().width() - 24), self.devicePixelRatioF()
+
+    def _refresh_resolution(self) -> None:
+        if self._markdown and self._display_metrics() != self._render_metrics:
+            scroll = self.verticalScrollBar().value()
+            self._render()
+            self.verticalScrollBar().setValue(scroll)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if hasattr(self, "_refresh_timer"):
+            self._refresh_timer.start()
+
+    def event(self, event) -> bool:
+        result = super().event(event)
+        # This event was introduced after our minimum supported Qt version.
+        if event.type() == getattr(QEvent.Type, "DevicePixelRatioChange", None):
+            if hasattr(self, "_refresh_timer"):
+                self._refresh_timer.start()
+        return result
 
     def _make_image_notice(self, text: str) -> QImage:
         """Create a small theme-neutral fallback shown during image loading."""
@@ -452,19 +486,33 @@ class MarkdownPreview(QTextBrowser):
         return image
 
     def _fit_image(self, image: QImage, cache_key: str = "") -> QImage:
-        """Show Markdown images at two thirds size and fit them to the view."""
+        """Keep logical size while retaining enough pixels for a HiDPI screen."""
         if image.isNull():
             return image
-        available_width = max(64, self.viewport().width() - 24)
-        target_width = min(available_width, max(1, round(image.width() * 2 / 3)))
-        scaled_key = (cache_key, target_width)
+        available_width, pixel_ratio = self._display_metrics()
+        target_width = min(
+            available_width,
+            max(1, round(image.deviceIndependentSize().width() * 2 / 3)),
+        )
+        scaled_key = (cache_key, target_width, pixel_ratio)
         if cache_key and scaled_key in self._scaled_image_cache:
             return self._scaled_image_cache[scaled_key]
-        scaled = image.scaledToWidth(
-            target_width,
-            Qt.TransformationMode.SmoothTransformation,
+        # Never shrink to logical pixels and let Qt upscale that low-resolution
+        # copy on a high-DPI screen. Never invent extra detail by upscaling the
+        # source either: use all available native pixels when necessary.
+        raster_width = min(image.width(), ceil(target_width * pixel_ratio))
+        scaled = (
+            image.copy()
+            if raster_width == image.width()
+            else image.scaledToWidth(
+                raster_width, Qt.TransformationMode.SmoothTransformation
+            )
         )
+        scaled.setDevicePixelRatio(raster_width / target_width)
         if cache_key:
+            # Resizing the view must not accumulate unbounded raster copies.
+            if len(self._scaled_image_cache) >= 32:
+                self._scaled_image_cache.pop(next(iter(self._scaled_image_cache)))
             self._scaled_image_cache[scaled_key] = scaled
         return scaled
 
@@ -545,6 +593,7 @@ class MarkdownPreview(QTextBrowser):
         self._render()
 
     def _render(self) -> None:
+        self._render_metrics = self._display_metrics()
         dark = self._theme == "dark"
         text_color = "#dfdedc" if dark else "#202123"
         code_background = "#0b0907" if dark else "#f4f6f8"
@@ -565,7 +614,11 @@ class MarkdownPreview(QTextBrowser):
             else f"'{self._code_font}','Consolas',monospace"
         )
         processed, self._formula_images = _replace_math(
-            _normalize_table_breaks(self._markdown), text_color, size_offset
+            _normalize_table_breaks(self._markdown),
+            text_color,
+            size_offset,
+            # Supersample fine strokes/subscripts without enlarging formulas.
+            max(4.0, float(ceil(self._render_metrics[1] * 2))),
         )
         document = QTextDocument()
         document.setDefaultStyleSheet(
@@ -593,10 +646,21 @@ class MarkdownPreview(QTextBrowser):
             body_size,
             text_color,
         )
+        # setHtml() alone preserves QTextDocument's old image-resource cache.
+        # Replace the document so resizing / changing screens cannot reuse an
+        # outdated low-resolution image under the same resource URL.
+        # Keep the QTextEdit control as owner: it deletes the previous document
+        # on setDocument(), whereas parenting to the browser leaks old copies.
+        rendered_document = QTextDocument(self.document().parent())
+        rendered_document.setDefaultFont(self.document().defaultFont())
+        rendered_document.setDocumentMargin(self.document().documentMargin())
+        rendered_document.setDefaultTextOption(self.document().defaultTextOption())
+        rendered_document.setDefaultStyleSheet(self.document().defaultStyleSheet())
         if self._base_path is not None:
-            self.document().setBaseUrl(
+            rendered_document.setBaseUrl(
                 QUrl.fromLocalFile(str(self._base_path.resolve()) + "/")
             )
+        self.setDocument(rendered_document)
         self.setHtml(html)
 
     def loadResource(self, resource_type: int, name: QUrl):

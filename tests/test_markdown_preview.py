@@ -3,8 +3,9 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from PyQt6.QtCore import QBuffer, QEventLoop, QIODevice, QTimer, QUrl
+from PyQt6.QtCore import QBuffer, QEvent, QEventLoop, QIODevice, QTimer, QUrl
 from PyQt6.QtGui import QColor, QImage, QTextDocument
 from PyQt6.QtNetwork import QHostAddress, QTcpServer
 from PyQt6.QtWidgets import QApplication
@@ -130,12 +131,131 @@ class TestMarkdownPreview(unittest.TestCase):
         preview.resize(400, 240)
         image = QImage(300, 150, QImage.Format.Format_ARGB32)
         fitted = preview._fit_image(image, "test-image")
-        self.assertEqual((fitted.width(), fitted.height()), (200, 100))
+        self.assertEqual(fitted.deviceIndependentSize().width(), 200)
+        self.assertEqual(fitted.deviceIndependentSize().height(), 100)
         self.assertEqual(
             preview._fit_image(image, "test-image").cacheKey(),
             fitted.cacheKey(),
         )
         self.assertEqual(len(preview._scaled_image_cache), 1)
+
+    def test_high_dpi_images_keep_source_detail_at_same_display_size(self):
+        preview = MarkdownPreview()
+        preview.resize(400, 240)
+        image = QImage(300, 150, QImage.Format.Format_ARGB32)
+        with patch.object(preview, "devicePixelRatioF", return_value=2.0):
+            fitted = preview._fit_image(image, "high-dpi")
+        self.assertEqual(fitted.deviceIndependentSize().width(), 200)
+        self.assertEqual(fitted.deviceIndependentSize().height(), 100)
+        # There is no reason to discard native pixels then upscale them again.
+        self.assertEqual((fitted.width(), fitted.height()), (300, 150))
+
+    def test_preview_formulas_have_high_resolution_backing_images(self):
+        preview = MarkdownPreview()
+        with patch.object(preview, "devicePixelRatioF", return_value=2.0):
+            preview.set_markdown(r"Inline $\frac{x^2}{y}+\sqrt{z}$.")
+        self.assertEqual(len(preview._formula_images), 1)
+        image = next(iter(preview._formula_images.values()))
+        self.assertGreaterEqual(image.devicePixelRatio(), 4.0)
+
+    def test_image_scale_cache_separates_screen_pixel_ratios(self):
+        preview = MarkdownPreview()
+        preview.resize(400, 240)
+        source = QImage(600, 300, QImage.Format.Format_ARGB32)
+        with patch.object(preview, "devicePixelRatioF", return_value=1.0):
+            low = preview._fit_image(source, "diagram")
+        with patch.object(preview, "devicePixelRatioF", return_value=1.5):
+            high = preview._fit_image(source, "diagram")
+            cached = preview._fit_image(source, "diagram")
+        self.assertEqual(low.deviceIndependentSize(), high.deviceIndependentSize())
+        self.assertGreater(high.width(), low.width())
+        self.assertEqual(cached.cacheKey(), high.cacheKey())
+        self.assertEqual(source.devicePixelRatio(), 1.0)
+        self.assertEqual(len(preview._scaled_image_cache), 2)
+
+    def test_source_with_pixel_ratio_keeps_its_logical_size(self):
+        preview = MarkdownPreview()
+        preview.resize(400, 240)
+        source = QImage(600, 300, QImage.Format.Format_ARGB32)
+        source.setDevicePixelRatio(2.0)
+        with patch.object(preview, "devicePixelRatioF", return_value=2.0):
+            fitted = preview._fit_image(source)
+        self.assertEqual(fitted.deviceIndependentSize().width(), 200)
+        self.assertEqual(fitted.deviceIndependentSize().height(), 100)
+        self.assertEqual((fitted.width(), fitted.height()), (400, 200))
+        self.assertEqual(source.devicePixelRatio(), 2.0)
+
+    def test_formula_supersampling_keeps_approximate_display_dimensions(self):
+        expressions = [
+            r"\frac{x^2}{y}+\sqrt{z}",
+            r"\begin{cases}x & x>0 \\ -x & x\le0\end{cases}",
+            r"x+\text{中文}",
+        ]
+        for expression in expressions:
+            with self.subTest(expression=expression):
+                low = _render_formula(expression, True, "#202123", 0, 2.0)
+                high = _render_formula(expression, True, "#202123", 0, 4.0)
+                self.assertGreater(high.width(), low.width())
+                self.assertAlmostEqual(
+                    low.deviceIndependentSize().width(),
+                    high.deviceIndependentSize().width(), delta=2,
+                )
+                self.assertAlmostEqual(
+                    low.deviceIndependentSize().height(),
+                    high.deviceIndependentSize().height(), delta=2,
+                )
+
+    def test_screen_change_replaces_cached_document_images(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = QImage(900, 450, QImage.Format.Format_ARGB32)
+            source.fill(QColor("#176b5b"))
+            image_path = Path(directory) / "diagram.png"
+            self.assertTrue(source.save(str(image_path), "PNG"))
+            preview = MarkdownPreview(image_cache_dir=Path(directory) / "cache")
+            preview.resize(500, 300)
+            url = QUrl.fromLocalFile(str(image_path))
+            markdown = f"![diagram]({url.toString()})\n\n" + r"$x^2$"
+            with patch.object(preview, "devicePixelRatioF", return_value=1.0):
+                preview.set_markdown(markdown, Path(directory))
+                low = preview.document().resource(
+                    QTextDocument.ResourceType.ImageResource, url
+                )
+                preview.document().setTextWidth(470)
+                # Qt must lay the image out in logical, not backing pixels.
+                low_layout_width = preview.document().begin().layout().lineAt(0).naturalTextWidth()
+            with patch.object(preview, "devicePixelRatioF", return_value=2.5):
+                if hasattr(QEvent.Type, "DevicePixelRatioChange"):
+                    self.app.sendEvent(preview, QEvent(QEvent.Type.DevicePixelRatioChange))
+                    self.assertTrue(preview._refresh_timer.isActive())
+                    preview._refresh_timer.stop()
+                preview._refresh_resolution()
+                high = preview.document().resource(
+                    QTextDocument.ResourceType.ImageResource, url
+                )
+                preview.document().setTextWidth(470)
+                high_layout_width = preview.document().begin().layout().lineAt(0).naturalTextWidth()
+                formula = preview.document().resource(
+                    QTextDocument.ResourceType.ImageResource, QUrl("formula://math-0")
+                )
+            self.assertGreater(high.width(), low.width())
+            self.assertAlmostEqual(low_layout_width, high_layout_width, delta=1)
+            self.assertEqual(formula.devicePixelRatio(), 5.0)
+            self.assertEqual(high.deviceIndependentSize().width(), low.deviceIndependentSize().width())
+
+    def test_resize_refreshes_image_fit_and_bounds_scale_cache(self):
+        preview = MarkdownPreview()
+        source = QImage(900, 450, QImage.Format.Format_ARGB32)
+        with patch.object(preview, "devicePixelRatioF", return_value=1.0):
+            for width in range(200, 250):
+                preview.resize(width, 240)
+                preview._fit_image(source, "diagram")
+        self.assertLessEqual(len(preview._scaled_image_cache), 32)
+
+    def test_rerender_does_not_keep_obsolete_documents(self):
+        preview = MarkdownPreview()
+        for number in range(10):
+            preview.set_markdown(f"Note {number}: $x^2$.")
+        self.assertEqual(len(preview.findChildren(QTextDocument)), 1)
 
     def test_network_image_disk_cache_survives_preview_restart(self):
         with tempfile.TemporaryDirectory() as directory:
