@@ -8,6 +8,7 @@ import re
 import shutil
 import sqlite3
 import sys
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -1190,16 +1191,42 @@ class IndexWorker(QObject):
 
     def run(self) -> None:
         """Generate samples when needed, then rebuild and save the index."""
+        staged_index: Path | None = None
+        phase = "扫描和解析笔记"
         try:
             self.notes_root.mkdir(parents=True, exist_ok=True)
             if self.auto_generate_samples and not any(self.notes_root.rglob("*.md")):
                 generate_sample_notes(self.notes_root)
-            index = build_index(self.notes_root, base_dir=self.index_base_dir)
-            save_index(index, self.index_path)
+            index = build_index(
+                self.notes_root, base_dir=self.index_base_dir, fail_on_invalid=True
+            )
+            # Do not overwrite the usable JSON before catalog synchronization
+            # succeeds. A sibling temporary file also permits atomic replace.
+            phase = "写入临时索引"
+            self.index_path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                dir=self.index_path.parent, prefix=".rebuild-", suffix=".json", delete=False
+            ) as staged:
+                staged_index = Path(staged.name)
+            save_index(index, staged_index)
+            phase = "同步 SQLite 笔记目录"
             sync_note_catalog(index, self.index_base_dir, self.database_path)
+            phase = "替换索引文件"
+            staged_index.replace(self.index_path)
         except (OSError, ValueError, sqlite3.Error) as exc:
-            self.failed.emit(str(exc))
+            self.failed.emit(f"{phase}失败：\n{exc}")
             return
+        except Exception as exc:
+            # No Python exception may escape a Qt slot: PyQt can abort the
+            # process rather than just stopping this background operation.
+            self.failed.emit(f"{phase}失败（{type(exc).__name__}）：{exc}")
+            return
+        finally:
+            if staged_index is not None:
+                try:
+                    staged_index.unlink(missing_ok=True)
+                except OSError:
+                    pass
         self.finished.emit(index)
 
 
@@ -1658,7 +1685,7 @@ class MainWindow(QMainWindow):
 
     def rebuild_index(self) -> None:
         """Rebuild the note index in a worker thread."""
-        if self._index_thread is not None and self._index_thread.isRunning():
+        if self._index_thread is not None:
             return
         self.rebuild_button.setEnabled(False)
         self.rebuild_button.setText("正在重建...")
@@ -1679,7 +1706,8 @@ class MainWindow(QMainWindow):
         worker.failed.connect(self._on_index_failed)
         worker.finished.connect(thread.quit)
         worker.failed.connect(thread.quit)
-        thread.finished.connect(worker.deleteLater)
+        worker.finished.connect(worker.deleteLater)
+        worker.failed.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
         thread.finished.connect(self._clear_index_worker)
         self._index_thread = thread
@@ -1691,19 +1719,20 @@ class MainWindow(QMainWindow):
         self._refresh_from_index()
         count = len(index.get("documents", {}))
         self.statusBar().showMessage(f"索引已更新，共 {count} 篇笔记", 5000)
-        self.rebuild_button.setEnabled(True)
-        self.rebuild_button.setText("重建索引")
         self._refresh_storage_status()
 
     def _on_index_failed(self, message: str) -> None:
-        self.rebuild_button.setEnabled(True)
-        self.rebuild_button.setText("重建索引")
         self.statusBar().showMessage("索引重建失败")
-        QMessageBox.critical(self, "索引重建失败", message)
+        QMessageBox.critical(
+            self, "索引重建失败",
+            f"{message}\n\n重建已安全停止。可以关闭此提示、修正问题后重试。",
+        )
 
     def _clear_index_worker(self) -> None:
         self._index_thread = None
         self._index_worker = None
+        self.rebuild_button.setEnabled(True)
+        self.rebuild_button.setText("重建索引")
 
     def _refresh_from_index(self) -> None:
         self._populate_subject_tree()

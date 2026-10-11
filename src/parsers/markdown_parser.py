@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import List, Literal
 
 import frontmatter
+from yaml import YAMLError
 
 VALID_NOTE_TYPES = ("exam", "postgraduate")
 VALID_EXAM_FREQ = (0, 1, 2, 3, 4, 5)
@@ -44,8 +45,24 @@ def parse_markdown(file_path: Path) -> Note:
     if not file_path.exists():
         raise FileNotFoundError(f"文件不存在: {file_path}")
 
-    with file_path.open(encoding="utf-8") as f:
-        post = frontmatter.load(f)
+    text = file_path.read_text(encoding="utf-8")
+    try:
+        post = frontmatter.loads(text)
+    except YAMLError as exc:
+        # frontmatter strips leading whitespace before parsing. Its YAML slice
+        # retains the opening delimiter's newline, so add only stripped lines.
+        leading_lines = text[:len(text) - len(text.lstrip())].count("\n")
+        mark = getattr(exc, "problem_mark", None)
+        location = (
+            f"，第 {mark.line + 1 + leading_lines} 行，第 {mark.column + 1} 列"
+            if mark is not None else ""
+        )
+        reason = getattr(exc, "problem", None) or str(exc)
+        if reason == "did not find expected ',' or ']'":
+            reason = "缺少逗号（,）或列表右括号（]），请检查 tags 等列表字段"
+        raise ValueError(
+            f"YAML 元数据语法错误：{file_path}{location}\n原因：{reason}"
+        ) from exc
 
     if not post.metadata:
         raise ValueError(f"缺少 YAML Front-matter: {file_path}")

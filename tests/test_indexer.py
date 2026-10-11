@@ -105,6 +105,27 @@ class TestBuildIndex(unittest.TestCase):
         index = build_index(notes)
         self.assertEqual(len(index["documents"]), 1)
 
+    def test_build_index_skips_malformed_yaml_without_losing_valid_notes(self):
+        notes = _make_notes_dir({
+            "好的/正常笔记.md": NOTE_EXAM,
+            "坏的/列表未闭合.md": '---\ntitle: bad\nsubject: test\ntags: [a, b\n---\nbody',
+        })
+        original = (notes / "坏的/列表未闭合.md").read_bytes()
+        index = build_index(notes)
+        self.assertEqual(len(index["documents"]), 1)
+        self.assertEqual((notes / "坏的/列表未闭合.md").read_bytes(), original)
+
+    def test_strict_rebuild_reports_all_bad_files(self):
+        notes = _make_notes_dir({
+            "good.md": NOTE_EXAM,
+            "bad-yaml.md": '---\ntitle: bad\nsubject: test\ntags: [a, b\n---\nbody',
+            "bad-metadata.md": NOTE_BAD,
+        })
+        with self.assertRaises(ValueError) as caught:
+            build_index(notes, fail_on_invalid=True)
+        self.assertIn("bad-yaml.md", str(caught.exception))
+        self.assertIn("bad-metadata.md", str(caught.exception))
+
     def test_index_filters_punctuation_and_preserves_mixed_term(self):
         content = NOTE_EXAM.replace(
             "二叉树的四种遍历方式",

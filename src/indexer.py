@@ -54,13 +54,16 @@ def _field_frequencies(note: Note) -> dict[str, dict[str, int]]:
     return term_fields
 
 
-def build_index(notes_root: Path, base_dir: Path | None = None) -> dict:
+def build_index(
+    notes_root: Path, base_dir: Path | None = None, *, fail_on_invalid: bool = False
+) -> dict:
     """扫描 notes_root 下所有 .md 文件，构建倒排索引。
 
     Args:
         notes_root: 笔记根目录，默认 data/notes/
         base_dir: 索引键的相对基准目录，默认取 notes_root 的上一级。
                   传入项目根目录时索引键形如 data/notes/微积分/xx.md
+        fail_on_invalid: GUI 重建使用严格模式；有无效笔记时报告错误而非发布残缺索引。
 
     Returns:
         索引字典，结构见 plan.md §4.1：
@@ -83,11 +86,15 @@ def build_index(notes_root: Path, base_dir: Path | None = None) -> dict:
 
     documents: dict[str, dict[str, Any]] = {}
     inverted_index: dict[str, dict[str, dict[str, int]]] = {}
+    invalid_notes: list[str] = []
 
     for md_file in sorted(notes_root.rglob("*.md")):
         try:
             note = parse_markdown(md_file)
         except (ValueError, FileNotFoundError, OSError) as e:
+            if fail_on_invalid:
+                invalid_notes.append(f"{md_file.relative_to(notes_root)}\n{e}")
+                continue
             print(f"[跳过] 无法解析的笔记: {md_file} — {e}", file=sys.stderr)
             continue
 
@@ -105,6 +112,14 @@ def build_index(notes_root: Path, base_dir: Path | None = None) -> dict:
         for term, fields in _field_frequencies(note).items():
             inverted_index.setdefault(term, {})[rel_path] = fields
 
+    if invalid_notes:
+        details = "\n\n".join(invalid_notes[:10])
+        if len(invalid_notes) > 10:
+            details += f"\n\n另有 {len(invalid_notes) - 10} 篇无效笔记。"
+        raise ValueError(
+            f"发现 {len(invalid_notes)} 篇无法解析的笔记，未更新索引。\n\n"
+            f"{details}\n\n请修正上述笔记后再次点击“重建索引”。"
+        )
     return {"documents": documents, "inverted_index": inverted_index}
 
 

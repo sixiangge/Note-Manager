@@ -36,6 +36,16 @@ def make_note_file(content: str) -> Path:
 class TestParseMarkdown(unittest.TestCase):
     """测试 parse_markdown 的解析与异常路径。"""
 
+    def test_yaml_error_reports_source_line_and_column_as_value_error(self):
+        path = make_note_file('---\ntitle: bad\nsubject: test\ntags: [a, b\n---\nbody')
+        with self.assertRaises(ValueError) as caught:
+            parse_markdown(path)
+        message = str(caught.exception)
+        self.assertIn(path.name, message)
+        self.assertIn("YAML", message)
+        self.assertIn("第 5 行", message)
+        self.assertIn("第 1 列", message)
+
     def test_parse_markdown_valid(self):
         """测试解析有效的 Markdown 文件。"""
         path = make_note_file(VALID_FRONTMATTER + "\n## 正文\n\n极限的定义是...\n")
