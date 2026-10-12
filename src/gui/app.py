@@ -38,9 +38,16 @@ def _install_qt_message_filter() -> None:
             return
         if previous_handler is not None:
             previous_handler(message_type, context, message)
-        else:
-            sys.stderr.write(f"{message}\n")
-            sys.stderr.flush()
+        elif sys.stderr is not None:
+            # PyInstaller --windowed has no stderr. A harmless Qt warning must
+            # not become an uncaught Python exception in this native callback
+            # (Qt aborts the process in that case).
+            try:
+                sys.stderr.write(f"{message}\n")
+                sys.stderr.flush()
+            except (OSError, ValueError):
+                # Console streams may also have been closed or disconnected.
+                pass
 
     previous_handler = qInstallMessageHandler(handle_message)
     _qt_message_handler = handle_message

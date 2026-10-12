@@ -24,6 +24,30 @@ class TestMarkdownPreview(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.app = QApplication.instance() or QApplication([])
 
+    def test_fenced_code_in_list_is_one_box_with_preserved_lines(self):
+        preview = MarkdownPreview()
+        preview.set_markdown('- ```\n  x2\n   |\n\n   |  /\n  ```\n\nAfter code')
+        tables = preview.document().rootFrame().childFrames()
+        self.assertEqual(len(tables), 1)
+        text = tables[0].cellAt(0, 0).firstCursorPosition().block().text()
+        self.assertEqual(text, 'x2\u2028 |\u2028\u2028 |  /')
+        self.assertIn('After code', preview.toPlainText())
+
+    def test_separate_code_blocks_remain_separate(self):
+        preview = MarkdownPreview()
+        preview.set_markdown('```textile\nfirst\nsecond\n```\n\nBetween\n\n```context\nthird\nfourth\n```')
+        self.assertEqual(len(preview.document().rootFrame().childFrames()), 2)
+        self.assertIn('Between', preview.toPlainText())
+
+    def test_fenced_code_uses_configured_scalable_font(self):
+        preview = MarkdownPreview()
+        preview.set_render_settings(theme='light', body_size='standard', code_size='large', body_font='system', code_font='Consolas')
+        preview.set_markdown('```textile\nfirst\nsecond\n```')
+        table = preview.document().rootFrame().childFrames()[0]
+        fragment = table.cellAt(0, 0).firstCursorPosition().block().begin().fragment()
+        self.assertIn('Consolas', fragment.charFormat().fontFamilies())
+        self.assertEqual(fragment.charFormat().fontPointSize(), 12)
+
     def test_display_math_with_cjk_text_command_renders(self):
         markdown = "$$\\text{中文说明}+x$$"
         processed, images = _replace_math(markdown, "#202123", 0)

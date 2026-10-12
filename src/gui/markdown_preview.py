@@ -23,7 +23,10 @@ _INLINE_MATH_RE = re.compile(r"(?<!\\)\$(?!\$)([^\n$]+?)(?<!\\)\$(?!\$)")
 _INLINE_CODE_RE = re.compile(r"(`+)([^`\n]*?)\1")
 _FENCE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})")
 _PRE_GROUP_RE = re.compile(
-    r'(?:<pre style="[^"]*">.*?</pre>\s*)+',
+    # Qt exports every line of a fenced block inside a list as <li><pre>.
+    # The synthetic <li> between lines is not a separate code block.
+    r'<pre style="[^"]*">.*?</pre>'
+    r'(?:\s*(?:<li>)?<pre style="[^"]*">.*?</pre>)*',
     re.DOTALL,
 )
 _PRE_CONTENT_RE = re.compile(r'<pre style="[^"]*">(.*?)</pre>', re.DOTALL)
@@ -358,13 +361,21 @@ def _box_code_blocks(
 
     def code_box(match: re.Match[str]) -> str:
         lines = _PRE_CONTENT_RE.findall(match.group(0))
+        # Qt represents an empty preformatted line with a <br>; joining that
+        # sentinel as well would introduce an extra blank line.
+        lines = ["" if re.fullmatch(r"\s*<br\s*/?>\s*", line) else line for line in lines]
         content = "<br />".join(lines)
+        # Qt emits Courier New / monospace on the inner spans. Those override
+        # the configured code font and can fall back to bitmap Fixedsys on
+        # Windows. Keep other span styling but use scalable code typography.
+        content = re.sub(r"font-family:[^;]*;", f"font-family:{code_font};", content)
+        content = re.sub(r"font-size:[^;]*;", f"font-size:{code_size}pt;", content)
         return (
             '<table border="1" cellspacing="0" cellpadding="9" width="100%" '
             f'style="margin-top:10px; margin-bottom:10px; border-color:{border}; '
             'border-collapse:collapse;">'
             f'<tr><td bgcolor="{background}">'
-            '<p style="margin:0px; white-space:pre-wrap;">'
+            f'<p style="margin:0px; white-space:pre-wrap; {monospace_style}">'
             f"{content}</p></td></tr></table>"
         )
 
